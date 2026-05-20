@@ -1,0 +1,260 @@
+{
+  "extensionName": {
+    "message": "X/Twitter Following Manager - Instantly Show Follower Counts & Export Lists",
+    "description": "Chrome Web Store title and extension name."
+  },
+  "extensionDescription": {
+    "message": "Instantly show follower counts on X/Twitter pages, manage following lists, and export data locally.",
+    "description": "Short extension description."
+  },
+  "actionTitle": {
+    "message": "X/Twitter Following Manager",
+    "description": "Browser action tooltip."
+  },
+  "shortName": {
+    "message": "X/Twitter Following Manager"
+  },
+  "htmlLang": {
+    "message": "en"
+  },
+  "authorText": {
+    "message": "Created by @liuqi"
+  },
+  "languageSwitchTitle": {
+    "message": "Switch language"
+  },
+  "languageSwitchZh": {
+    "message": "中"
+  },
+  "languageSwitchEn": {
+    "message": "EN"
+  },
+  "followingLabel": {
+    "message": "Following"
+  },
+  "followersLabel": {
+    "message": "Followers"
+  },
+  "sourceFeed": {
+    "message": "Feed"
+  },
+  "sourceUserList": {
+    "message": "User lists"
+  },
+  "sourceImport": {
+    "message": "Import"
+  },
+  "sourceComment": {
+    "message": "Reply list"
+  },
+  "sourcePrefix": {
+    "message": "Source: "
+  },
+  "listSeparator": {
+    "message": ", "
+  },
+  "postKindOriginal": {
+    "message": "Original"
+  },
+  "postKindRetweet": {
+    "message": "Repost"
+  },
+  "postKindComment": {
+    "message": "Reply"
+  },
+  "postKindImport": {
+    "message": "Import"
+  },
+  "pillStatsText": {
+    "message": "$1 Following · $2 Followers"
+  },
+  "pillWaitingData": {
+    "message": "Waiting"
+  },
+  "pillReading": {
+    "message": "Reading"
+  },
+  "pillLoadingFullTitle": {
+    "message": "Getting counts from X page data and avatar hover cards."
+  },
+  "pillLoadingShortTitle": {
+    "message": "Reading counts."
+  },
+  "pillHoverReadingTitle": {
+    "message": "Reading avatar hover card."
+  },
+  "pillHoverMissingTitle": {
+    "message": "No hover card was read this time. The extension will keep retrying."
+  },
+  "pillHoverInterruptedTitle": {
+    "message": "Hover card reading was interrupted by the page. The extension will keep retrying."
+  },
+  "popupStatusLoading": {
+    "message": "Loading status..."
+  },
+  "popupMetricsAria": {
+    "message": "Status"
+  },
+  "popupVisibleCountLabel": {
+    "message": "Visible items"
+  },
+  "popupCacheCountLabel": {
+    "message": "Cached users"
+  },
+  "popupSettingsAria": {
+    "message": "Display surfaces"
+  },
+  "popupOpenManager": {
+    "message": "Open manager"
+  },
+  "popupRescan": {
+    "message": "Rescan this page"
+  },
+  "popupClearCache": {
+    "message": "Clear cache"
+  },
+  "popupHint": {
+    "message": "Toggles control where counts appear on the current page and after refresh."
+  },
+  "popupUseOnX": {
+    "message": "Use this on x.com or twitter.com pages."
+  },
+  "popupCacheCleared": {
+    "message": "Cache cleared."
+  },
+  "popupScriptNotReady": {
+    "message": "The extension script is not loaded in this tab yet. Refresh X and try again."
+  },
+  "popupCapturedStatus": {
+    "message": "Captured $1 users, queue $2"
+  },
+  "managerSummaryLoading": {
+    "message": "Loading local captured data..."
+  },
+  "managerShowComments": {
+    "message": "Show reply-list source"
+  },
+  "managerPreferComments": {
+    "message": "Prefer replies"
+  },
+  "managerSearchPlaceholder": {
+    "message": "Search name, handle, bio, post"
+  },
+  "managerSourceFilterAria": {
+    "message": "Source filter"
+  },
+  "managerAllSources": {
+    "message": "All sources"
+  },
+  "managerExportFormatAria": {
+    "message": "Export format"
+  },
+  "managerExportSelected": {
+    "message": "Export selected"
+  },
+  "managerImportUsers": {
+    "message": "Import from file"
+  },
+  "managerOpenSelectedProfiles": {
+    "message": "Batch open profiles"
+  },
+  "managerSelectVisible": {
+    "message": "Select current results"
+  },
+  "managerSelectMissing": {
+    "message": "Select missing results"
+  },
+  "managerInvertSelection": {
+    "message": "Invert selection"
+  },
+  "managerClearSelection": {
+    "message": "Clear selection"
+  },
+  "managerRefreshData": {
+    "message": "Refresh data"
+  },
+  "managerSequentialUpdateTitle": {
+    "message": "Sequentially update selected accounts"
+  },
+  "managerSequentialStopTitle": {
+    "message": "Stop sequential update"
+  },
+  "managerLockList": {
+    "message": "Lock account list"
+  },
+  "tooltipLockList": {
+    "message": "Lock the manager to accounts already captured or imported. While this is on, browsing X only updates existing rows and does not add newly seen accounts to the manager."
+  },
+  "tooltipSequentialUpdate": {
+    "message": "Open one selected profile at a time to refresh follower and following counts. The account list is locked during the run; closing the updater tab stops it."
+  },
+  "tooltipSequentialStop": {
+    "message": "Stop after the current account finishes."
+  },
+  "tooltipShowComments": {
+    "message": "Show accounts captured only from reply lists. Accounts also seen in the Feed or user lists stay visible when this is off."
+  },
+  "tooltipPreferComments": {
+    "message": "When an account has both posts and replies recorded, show the latest reply first. This only changes the displayed post, not which users appear."
+  },
+  "managerTableAria": {
+    "message": "User table"
+  },
+  "managerToggleVisibleAria": {
+    "message": "Toggle current results"
+  },
+  "managerColumnUser": {
+    "message": "User"
+  },
+  "managerColumnFollowing": {
+    "message": "Following"
+  },
+  "managerColumnFollowers": {
+    "message": "Followers"
+  },
+  "managerColumnSource": {
+    "message": "Source"
+  },
+  "managerColumnLatestPost": {
+    "message": "Latest browsed post"
+  },
+  "managerColumnLastSeen": {
+    "message": "Last seen"
+  },
+  "managerEmptyState": {
+    "message": "No users captured yet. Open X, scroll a page, then refresh here."
+  },
+  "managerSelectUserAria": {
+    "message": "Select @$1"
+  },
+  "managerNoPostImport": {
+    "message": "Imported from user file, no browsed post yet"
+  },
+  "managerNoPostUserList": {
+    "message": "From user list, no browsed post yet"
+  },
+  "managerNoPostGeneric": {
+    "message": "No browsed post yet"
+  },
+  "managerOpenLink": {
+    "message": "Open"
+  },
+  "managerNoImportUsers": {
+    "message": "No importable users were found in this file."
+  },
+  "managerSequentialStop": {
+    "message": "Stopping sequential update after the current account finishes."
+  },
+  "managerSelectUsersFirst": {
+    "message": "Select accounts to update first."
+  },
+  "managerUpdatingSequential": {
+    "message": "Sequentially updating $1/$2: @$3"
+  },
+  "managerSequentialInterrupted": {
+    "message": "Sequential update interrupted: $1"
+  },
+  "managerSummary": {
+    "message": "$1 users total, $2 current results, $3 selected."
+  }
+}

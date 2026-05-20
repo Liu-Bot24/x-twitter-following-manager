@@ -1,0 +1,258 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background: #050505;
+  color: #e7e9ea;
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  margin: 0;
+  width: 290px;
+}
+
+main {
+  padding: 16px;
+}
+
+header {
+  padding-right: 82px;
+  position: relative;
+}
+
+h1 {
+  font-size: 16px;
+  line-height: 1.2;
+  margin: 0;
+}
+
+.title-line {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  margin: 0 0 6px;
+}
+
+.author-link {
+  color: #8fd8ff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-decoration: none;
+  text-underline-offset: 2px;
+}
+
+.author-link:link,
+.author-link:visited {
+  color: #8fd8ff;
+}
+
+.author-link:hover,
+.author-link:focus-visible {
+  color: #bfeaff;
+  text-decoration: underline;
+}
+
+.language-switch {
+  align-items: center;
+  border: 1px solid #263340;
+  border-radius: 999px;
+  cursor: pointer;
+  display: grid;
+  font-size: 11px;
+  font-weight: 800;
+  grid-template-columns: 1fr 1fr;
+  height: 28px;
+  overflow: hidden;
+  padding: 2px;
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 72px;
+}
+
+.language-switch input {
+  appearance: none;
+  height: 0;
+  margin: 0;
+  opacity: 0;
+  position: absolute;
+  width: 0;
+}
+
+.language-switch span {
+  color: #8b98a5;
+  line-height: 22px;
+  position: relative;
+  text-align: center;
+  transition: color 140ms ease;
+  z-index: 1;
+}
+
+.language-switch i {
+  background: #1d9bf0;
+  border-radius: 999px;
+  height: 22px;
+  left: 3px;
+  position: absolute;
+  top: 2px;
+  transition: transform 140ms ease;
+  width: 32px;
+}
+
+.language-switch input:not(:checked) ~ span:first-of-type,
+.language-switch input:checked ~ span:nth-of-type(2) {
+  color: #fff;
+}
+
+.language-switch input:checked ~ i {
+  transform: translateX(34px);
+}
+
+p {
+  color: #8b98a5;
+  margin: 0;
+}
+
+.metrics {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr 1fr;
+  margin: 14px 0;
+}
+
+.metrics div {
+  border: 1px solid #263340;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.metrics strong {
+  color: #1d9bf0;
+  display: block;
+  font-size: 20px;
+  line-height: 1;
+  margin-bottom: 5px;
+}
+
+.metrics span {
+  color: #8b98a5;
+  font-size: 12px;
+}
+
+.settings {
+  border: 1px solid #263340;
+  border-radius: 8px;
+  display: grid;
+  gap: 2px;
+  margin: 0 0 12px;
+  padding: 6px 10px;
+}
+
+.switch-row {
+  align-items: center;
+  color: #e7e9ea;
+  display: grid;
+  font-weight: 700;
+  grid-template-columns: 1fr auto;
+  min-height: 34px;
+  position: relative;
+}
+
+.switch-row input {
+  appearance: none;
+  height: 0;
+  margin: 0;
+  opacity: 0;
+  position: absolute;
+  width: 0;
+}
+
+.switch-row i {
+  background: #536471;
+  border-radius: 999px;
+  height: 20px;
+  position: relative;
+  width: 36px;
+}
+
+.switch-row i::after {
+  background: #fff;
+  border-radius: 50%;
+  content: "";
+  height: 16px;
+  left: 2px;
+  position: absolute;
+  top: 2px;
+  transition: transform 140ms ease;
+  width: 16px;
+}
+
+.switch-row input:checked + i {
+  background: #1d9bf0;
+}
+
+.switch-row input:checked + i::after {
+  transform: translateX(16px);
+}
+
+.has-tooltip::after {
+  background: #15202b;
+  border: 1px solid #38444d;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.42);
+  color: #e7e9ea;
+  content: attr(data-tooltip);
+  font-size: 12px;
+  font-weight: 600;
+  left: 0;
+  line-height: 1.45;
+  opacity: 0;
+  padding: 8px 9px;
+  pointer-events: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  transform: translateY(-2px);
+  transition: opacity 80ms ease, transform 80ms ease;
+  transition-delay: 0ms;
+  width: min(238px, calc(100vw - 32px));
+  z-index: 20;
+}
+
+.has-tooltip:hover::after,
+.has-tooltip:focus-within::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.actions {
+  display: grid;
+  gap: 8px;
+}
+
+button {
+  appearance: none;
+  background: #eff3f4;
+  border: 0;
+  border-radius: 999px;
+  color: #0f1419;
+  cursor: pointer;
+  font: 700 14px/18px inherit;
+  padding: 8px 12px;
+}
+
+button.secondary {
+  background: transparent;
+  border: 1px solid #536471;
+  color: #e7e9ea;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.hint {
+  font-size: 12px;
+  margin-top: 12px;
+}

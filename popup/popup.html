@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>X/Twitter Following Manager</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <label class="language-switch" title="Switch language" data-i18n-title="languageSwitchTitle">
+          <input id="language-toggle" type="checkbox" aria-label="Switch language" data-i18n-aria-label="languageSwitchTitle">
+          <span data-i18n="languageSwitchEn">EN</span>
+          <span data-i18n="languageSwitchZh">中</span>
+          <i aria-hidden="true"></i>
+        </label>
+        <div class="title-line">
+          <h1 data-i18n="shortName">X/Twitter Following Manager</h1>
+          <a class="author-link" href="https://blog.liu-qi.cn/index.php/tools/" target="_blank" rel="noreferrer" data-i18n="authorText">Created by @liuqi</a>
+        </div>
+        <p id="status" data-i18n="popupStatusLoading">Loading status...</p>
+      </header>
+      <section class="metrics" aria-label="Status" data-i18n-aria-label="popupMetricsAria">
+        <div>
+          <strong id="visible-count">-</strong>
+          <span data-i18n="popupVisibleCountLabel">Visible items</span>
+        </div>
+        <div>
+          <strong id="cache-count">-</strong>
+          <span data-i18n="popupCacheCountLabel">Cached users</span>
+        </div>
+      </section>
+      <section class="settings" aria-label="Display surfaces" data-i18n-aria-label="popupSettingsAria">
+        <label class="switch-row">
+          <span data-i18n="sourceFeed">Feed</span>
+          <input id="feed-toggle" type="checkbox">
+          <i aria-hidden="true"></i>
+        </label>
+        <label class="switch-row">
+          <span data-i18n="sourceUserList">User lists</span>
+          <input id="user-list-toggle" type="checkbox">
+          <i aria-hidden="true"></i>
+        </label>
+        <label class="switch-row has-tooltip" data-i18n-tooltip="tooltipLockList">
+          <span data-i18n="managerLockList">Lock account list</span>
+          <input id="lock-list-toggle" type="checkbox">
+          <i aria-hidden="true"></i>
+        </label>
+      </section>
+      <div class="actions">
+        <button id="open-manager" type="button" data-i18n="popupOpenManager">Open manager</button>
+        <button id="rescan" type="button" data-i18n="popupRescan">Rescan this page</button>
+        <button id="clear" type="button" class="secondary" data-i18n="popupClearCache">Clear cache</button>
+      </div>
+      <p class="hint" data-i18n="popupHint">Toggles control where counts appear on the current page and after refresh.</p>
+    </main>
+    <script src="../i18n.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>

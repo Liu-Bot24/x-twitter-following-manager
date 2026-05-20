@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>X/Twitter Following Manager</title>
+    <link rel="stylesheet" href="manager.css">
+  </head>
+  <body>
+    <main>
+      <header class="topbar">
+        <div>
+          <div class="title-line">
+            <h1 data-i18n="shortName">X/Twitter Following Manager</h1>
+            <a class="author-link" href="https://blog.liu-qi.cn/index.php/tools/" target="_blank" rel="noreferrer" data-i18n="authorText">Created by @liuqi</a>
+          </div>
+          <p id="summary" data-i18n="managerSummaryLoading">Loading local captured data...</p>
+        </div>
+        <div class="toolbar">
+          <label class="filter-toggle has-tooltip" data-i18n-tooltip="tooltipShowComments">
+            <input id="show-comments" type="checkbox" checked>
+            <span data-i18n="managerShowComments">Show reply-list source</span>
+          </label>
+          <label class="filter-toggle has-tooltip" data-i18n-tooltip="tooltipPreferComments">
+            <input id="prefer-comments" type="checkbox">
+            <span data-i18n="managerPreferComments">Prefer replies</span>
+          </label>
+          <input id="search" type="search" placeholder="Search name, handle, bio, post" data-i18n-placeholder="managerSearchPlaceholder">
+          <select id="source-filter" aria-label="Source filter" data-i18n-aria-label="managerSourceFilterAria">
+            <option value="all" data-i18n="managerAllSources">All sources</option>
+            <option value="feed" data-i18n="sourceFeed">Feed</option>
+            <option value="userList" data-i18n="sourceUserList">User lists</option>
+            <option value="import" data-i18n="sourceImport">Import</option>
+          </select>
+          <select id="format" aria-label="Export format" data-i18n-aria-label="managerExportFormatAria">
+            <option value="csv">CSV</option>
+            <option value="markdown">Markdown</option>
+          </select>
+          <button id="export" type="button" data-i18n="managerExportSelected">Export selected</button>
+        </div>
+      </header>
+
+      <section class="manager-controls">
+        <div class="quick-actions">
+          <button id="import-users" type="button" data-i18n="managerImportUsers">Import from file</button>
+          <button id="open-selected-profiles" type="button" disabled data-i18n="managerOpenSelectedProfiles">Batch open profiles</button>
+          <button id="select-visible" type="button" data-i18n="managerSelectVisible">Select current results</button>
+          <button id="select-missing" type="button" data-i18n="managerSelectMissing">Select missing results</button>
+          <button id="invert-selection" type="button" data-i18n="managerInvertSelection">Invert selection</button>
+          <button id="clear-selection" type="button" data-i18n="managerClearSelection">Clear selection</button>
+          <button id="refresh" type="button" data-i18n="managerRefreshData">Refresh data</button>
+        </div>
+        <button
+          id="sequential-update"
+          class="icon-button has-tooltip"
+          type="button"
+          aria-label="Sequentially update selected accounts"
+          data-i18n-aria-label="managerSequentialUpdateTitle"
+          data-i18n-tooltip="tooltipSequentialUpdate"
+          disabled
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M20 11a8 8 0 1 0-2.34 5.66"></path>
+            <path d="M20 5v6h-6"></path>
+          </svg>
+        </button>
+        <label class="lock-switch has-tooltip" data-i18n-tooltip="tooltipLockList">
+          <span data-i18n="managerLockList">Lock account list</span>
+          <input id="lock-list-toggle" type="checkbox">
+          <i aria-hidden="true"></i>
+        </label>
+        <input id="import-file" type="file" accept=".csv,.md,.markdown,text/csv,text/markdown" hidden>
+      </section>
+
+      <section class="table-wrap" aria-label="User table" data-i18n-aria-label="managerTableAria">
+        <table>
+          <thead>
+            <tr>
+              <th><input id="toggle-visible" type="checkbox" aria-label="Toggle current results" data-i18n-aria-label="managerToggleVisibleAria"></th>
+              <th data-i18n="managerColumnUser">User</th>
+              <th class="count-column" data-i18n="managerColumnFollowing">Following</th>
+              <th class="count-column" data-i18n="managerColumnFollowers">Followers</th>
+              <th data-i18n="managerColumnSource">Source</th>
+              <th data-i18n="managerColumnLatestPost">Latest browsed post</th>
+              <th class="date-column" data-i18n="managerColumnLastSeen">Last seen</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <p id="empty" class="empty" hidden data-i18n="managerEmptyState">No users captured yet. Open X, scroll a page, then refresh here.</p>
+      </section>
+    </main>
+    <script src="../i18n.js"></script>
+    <script src="../stats-core.js"></script>
+    <script src="manager.js"></script>
+  </body>
+</html>

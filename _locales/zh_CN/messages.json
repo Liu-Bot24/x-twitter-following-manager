@@ -1,0 +1,260 @@
+{
+  "extensionName": {
+    "message": "X/Twitter 关注管理器 - 直接显示粉丝数，管理并导出名单",
+    "description": "Chrome 应用商店标题和扩展名称。"
+  },
+  "extensionDescription": {
+    "message": "在 X/Twitter 页面直接显示粉丝数，管理关注名单，并将数据导出到本地。",
+    "description": "扩展短描述。"
+  },
+  "actionTitle": {
+    "message": "X/Twitter 关注管理器",
+    "description": "浏览器按钮提示。"
+  },
+  "shortName": {
+    "message": "X/Twitter 关注管理器"
+  },
+  "htmlLang": {
+    "message": "zh-CN"
+  },
+  "authorText": {
+    "message": "Created by @liuqi"
+  },
+  "languageSwitchTitle": {
+    "message": "切换语言"
+  },
+  "languageSwitchZh": {
+    "message": "中"
+  },
+  "languageSwitchEn": {
+    "message": "EN"
+  },
+  "followingLabel": {
+    "message": "正在关注"
+  },
+  "followersLabel": {
+    "message": "关注者"
+  },
+  "sourceFeed": {
+    "message": "Feed 流"
+  },
+  "sourceUserList": {
+    "message": "用户列表"
+  },
+  "sourceImport": {
+    "message": "导入"
+  },
+  "sourceComment": {
+    "message": "评论列表"
+  },
+  "sourcePrefix": {
+    "message": "来源："
+  },
+  "listSeparator": {
+    "message": "、"
+  },
+  "postKindOriginal": {
+    "message": "原创"
+  },
+  "postKindRetweet": {
+    "message": "转推"
+  },
+  "postKindComment": {
+    "message": "评论"
+  },
+  "postKindImport": {
+    "message": "导入"
+  },
+  "pillStatsText": {
+    "message": "$1 正在关注 · $2 关注者"
+  },
+  "pillWaitingData": {
+    "message": "等待数据"
+  },
+  "pillReading": {
+    "message": "读取中"
+  },
+  "pillLoadingFullTitle": {
+    "message": "正在通过 X 页面数据和头像悬停卡片获取关注数。"
+  },
+  "pillLoadingShortTitle": {
+    "message": "正在读取关注数。"
+  },
+  "pillHoverReadingTitle": {
+    "message": "正在读取头像悬停卡片。"
+  },
+  "pillHoverMissingTitle": {
+    "message": "这次没有读到悬停卡片，扩展会继续重试。"
+  },
+  "pillHoverInterruptedTitle": {
+    "message": "悬停卡片读取被页面打断，扩展会继续重试。"
+  },
+  "popupStatusLoading": {
+    "message": "正在读取状态..."
+  },
+  "popupMetricsAria": {
+    "message": "状态"
+  },
+  "popupVisibleCountLabel": {
+    "message": "当前条目"
+  },
+  "popupCacheCountLabel": {
+    "message": "缓存用户"
+  },
+  "popupSettingsAria": {
+    "message": "显示位置"
+  },
+  "popupOpenManager": {
+    "message": "打开用户管理页"
+  },
+  "popupRescan": {
+    "message": "重新扫描本页"
+  },
+  "popupClearCache": {
+    "message": "清除缓存"
+  },
+  "popupHint": {
+    "message": "开关会控制当前页面和后续刷新后的显示位置。"
+  },
+  "popupUseOnX": {
+    "message": "请在 x.com 或 twitter.com 页面使用。"
+  },
+  "popupCacheCleared": {
+    "message": "缓存已清除。"
+  },
+  "popupScriptNotReady": {
+    "message": "当前标签页还没有加载插件脚本，刷新 X 页面后再试。"
+  },
+  "popupCapturedStatus": {
+    "message": "已捕获 $1 个用户，队列 $2"
+  },
+  "managerSummaryLoading": {
+    "message": "正在读取本地捕获数据..."
+  },
+  "managerShowComments": {
+    "message": "显示评论列表来源"
+  },
+  "managerPreferComments": {
+    "message": "评论优先"
+  },
+  "managerSearchPlaceholder": {
+    "message": "搜索昵称、ID、简介、推文"
+  },
+  "managerSourceFilterAria": {
+    "message": "来源筛选"
+  },
+  "managerAllSources": {
+    "message": "全部来源"
+  },
+  "managerExportFormatAria": {
+    "message": "导出格式"
+  },
+  "managerExportSelected": {
+    "message": "导出选中"
+  },
+  "managerImportUsers": {
+    "message": "从文件导入"
+  },
+  "managerOpenSelectedProfiles": {
+    "message": "批量打开主页"
+  },
+  "managerSelectVisible": {
+    "message": "全选当前结果"
+  },
+  "managerSelectMissing": {
+    "message": "选中缺失结果"
+  },
+  "managerInvertSelection": {
+    "message": "反向选择"
+  },
+  "managerClearSelection": {
+    "message": "清空选择"
+  },
+  "managerRefreshData": {
+    "message": "刷新数据"
+  },
+  "managerSequentialUpdateTitle": {
+    "message": "顺序更新选中账号数据"
+  },
+  "managerSequentialStopTitle": {
+    "message": "停止顺序更新"
+  },
+  "managerLockList": {
+    "message": "锁定账号列表"
+  },
+  "tooltipLockList": {
+    "message": "锁定当前已捕获或导入的账号列表。开启后，浏览 X 只更新这些账号的数据，不会把新看到的账号加入管理页。"
+  },
+  "tooltipSequentialUpdate": {
+    "message": "按顺序打开选中的账号主页，逐个刷新关注数和粉丝数。运行期间会锁定账号列表；关闭更新标签页即可停止。"
+  },
+  "tooltipSequentialStop": {
+    "message": "当前账号处理完后停止顺序更新。"
+  },
+  "tooltipShowComments": {
+    "message": "显示只从评论列表捕获到的账号。若账号也出现在 Feed 流或用户列表里，关闭后仍会保留。"
+  },
+  "tooltipPreferComments": {
+    "message": "当同一个账号同时有推文和评论记录时，优先展示最新评论。它只影响已浏览推文这一列，不筛选用户。"
+  },
+  "managerTableAria": {
+    "message": "用户表"
+  },
+  "managerToggleVisibleAria": {
+    "message": "切换当前结果选择"
+  },
+  "managerColumnUser": {
+    "message": "用户"
+  },
+  "managerColumnFollowing": {
+    "message": "正在关注"
+  },
+  "managerColumnFollowers": {
+    "message": "关注者"
+  },
+  "managerColumnSource": {
+    "message": "来源"
+  },
+  "managerColumnLatestPost": {
+    "message": "已浏览的最新推文"
+  },
+  "managerColumnLastSeen": {
+    "message": "最近看到"
+  },
+  "managerEmptyState": {
+    "message": "还没有捕获到用户。打开 X 页面并滚动后再回来刷新。"
+  },
+  "managerSelectUserAria": {
+    "message": "选择 @$1"
+  },
+  "managerNoPostImport": {
+    "message": "来自用户导入，未浏览到推文"
+  },
+  "managerNoPostUserList": {
+    "message": "来自用户列表，未浏览到推文"
+  },
+  "managerNoPostGeneric": {
+    "message": "未浏览到推文"
+  },
+  "managerOpenLink": {
+    "message": "打开"
+  },
+  "managerNoImportUsers": {
+    "message": "没有从文件中识别到可导入用户。"
+  },
+  "managerSequentialStop": {
+    "message": "正在停止顺序更新，当前账号处理完后结束。"
+  },
+  "managerSelectUsersFirst": {
+    "message": "请先选择需要更新的账号。"
+  },
+  "managerUpdatingSequential": {
+    "message": "正在顺序更新 $1/$2：@$3"
+  },
+  "managerSequentialInterrupted": {
+    "message": "顺序更新中断：$1"
+  },
+  "managerSummary": {
+    "message": "共 $1 个用户，当前结果 $2 个，已选 $3 个。"
+  }
+}
