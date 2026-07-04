@@ -2,6 +2,8 @@
 
 # X/Twitter 关注管理器
 
+![Stars](https://img.shields.io/github/stars/Liu-Bot24/x-twitter-following-manager?style=flat&label=Stars&cache=20260704) ![Forks](https://img.shields.io/github/forks/Liu-Bot24/x-twitter-following-manager?style=flat&label=Forks&cache=20260704) ![Views 14d](https://github-stats.liu-qi.cn/api/badge/Liu-Bot24/x-twitter-following-manager/views14d.svg?v=4) ![Clones 14d](https://github-stats.liu-qi.cn/api/badge/Liu-Bot24/x-twitter-following-manager/clones14d.svg?v=4) ![Downloads](https://img.shields.io/github/downloads/Liu-Bot24/x-twitter-following-manager/total?style=flat&label=Downloads&cache=20260704) ![Release](https://img.shields.io/github/v/release/Liu-Bot24/x-twitter-following-manager?style=flat&label=Release&cache=20260704)
+
 ![X/Twitter 关注管理器预览](docs/assets/github-preview.png)
 
 Languages: [简体中文](README.md) · [English](README-en.md)
