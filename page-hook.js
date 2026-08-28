@@ -1,7 +1,7 @@
 (function installXFollowStatsPageHook() {
   "use strict";
 
-  const core = window.XFollowStatsCore;
+  const core = window.XFollowStatsPageCore;
   if (!core || window.__xFollowStatsPageHookLoaded) {
     return;
   }
@@ -11,6 +11,32 @@
   const originalFetch = window.fetch;
   const originalXhrOpen = XMLHttpRequest.prototype.open;
   const originalXhrSend = XMLHttpRequest.prototype.send;
+  const pendingUserBatches = [];
+  let contentReady = false;
+
+  function postHookReady() {
+    window.postMessage({ source: SOURCE, type: "hook-ready" }, window.location.origin);
+  }
+
+  function flushPendingUsers() {
+    if (!contentReady) {
+      return;
+    }
+    while (pendingUserBatches.length > 0) {
+      const batch = pendingUserBatches.shift();
+      postUsers(batch.users, batch.sourceUrl);
+    }
+  }
+
+  window.addEventListener("message", event => {
+    if (event.source !== window || !event.data || event.data.source !== SOURCE) {
+      return;
+    }
+    if (event.data.type === "content-ready") {
+      contentReady = true;
+      flushPendingUsers();
+    }
+  });
 
   function shouldInspectUrl(url) {
     if (!url || typeof url !== "string") {
@@ -28,6 +54,13 @@
 
   function postUsers(users, sourceUrl) {
     if (!users || users.length === 0) {
+      return;
+    }
+    if (!contentReady) {
+      pendingUserBatches.push({ users, sourceUrl });
+      if (pendingUserBatches.length > 100) {
+        pendingUserBatches.shift();
+      }
       return;
     }
     window.postMessage(
@@ -110,4 +143,6 @@
     return originalXhrSend.apply(this, arguments);
   };
   XMLHttpRequest.prototype.send.toString = () => originalXhrSend.toString();
+
+  postHookReady();
 })();

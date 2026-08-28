@@ -30,6 +30,12 @@
   margin-left: 0;
 }
 
+html[data-xfs-silent-hover="1"] [data-testid="HoverCard"],
+[data-testid="HoverCard"][data-xfs-silent-card="1"] {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
 .xfs-stats-pill[data-xfs-state="loaded"] {
   border-color: rgba(29, 155, 240, 0.42);
   color: rgb(29, 155, 240);

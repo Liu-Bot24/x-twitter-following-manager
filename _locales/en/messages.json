@@ -75,19 +75,19 @@
     "message": "Reading"
   },
   "pillLoadingFullTitle": {
-    "message": "Getting counts from X page data and avatar hover cards."
+    "message": "Getting following counts from X."
   },
   "pillLoadingShortTitle": {
     "message": "Reading counts."
   },
   "pillHoverReadingTitle": {
-    "message": "Reading avatar hover card."
+    "message": "Reading following counts."
   },
   "pillHoverMissingTitle": {
-    "message": "No hover card was read this time. The extension will keep retrying."
+    "message": "Counts were not available yet. The extension will retry."
   },
   "pillHoverInterruptedTitle": {
-    "message": "Hover card reading was interrupted by the page. The extension will keep retrying."
+    "message": "Reading paused while you use the page. It will retry when the page is idle."
   },
   "popupStatusLoading": {
     "message": "Loading status..."
@@ -114,7 +114,7 @@
     "message": "Clear cache"
   },
   "popupHint": {
-    "message": "Toggles control where counts appear on the current page and after refresh."
+    "message": "The extension automatically chooses an available way to read counts. A profile card may appear briefly if background reading fails."
   },
   "popupUseOnX": {
     "message": "Use this on x.com or twitter.com pages."

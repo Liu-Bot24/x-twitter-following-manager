@@ -481,12 +481,13 @@
         const user = targetUsers[index];
         const profileUrl = profileUrlForUser(user);
         setStatusMessage(t("managerUpdatingSequential", index + 1, targetUsers.length, user.username));
+        const refreshRequestedAt = Date.now();
         const tabReady = await openOrNavigateSequentialTab(profileUrl);
         if (!tabReady) {
           sequentialUpdate.cancelRequested = true;
           break;
         }
-        const result = await requestProfileStatsUpdate(sequentialUpdate.tabId, user.username);
+        const result = await requestProfileStatsUpdate(sequentialUpdate.tabId, user.username, refreshRequestedAt);
         if (result && result.manualStop) {
           sequentialUpdate.cancelRequested = true;
           break;
@@ -525,7 +526,7 @@
     return true;
   }
 
-  function requestProfileStatsUpdate(tabId, username) {
+  function requestProfileStatsUpdate(tabId, username, refreshRequestedAt) {
     const startedAt = Date.now();
     return new Promise(resolve => {
       const attempt = () => {
@@ -533,18 +534,22 @@
           resolve({ ok: false, hasStats: false, error: "timeout" });
           return;
         }
-        chrome.tabs.sendMessage(tabId, { type: "xfs:updateProfileStats", username }, response => {
-          const error = chrome.runtime.lastError;
-          if (error) {
-            if (isMissingTabError(error.message)) {
-              resolve({ ok: false, hasStats: false, manualStop: true, error: error.message });
+        chrome.tabs.sendMessage(
+          tabId,
+          { type: "xfs:updateProfileStats", username, force: true, refreshRequestedAt },
+          response => {
+            const error = chrome.runtime.lastError;
+            if (error) {
+              if (isMissingTabError(error.message)) {
+                resolve({ ok: false, hasStats: false, manualStop: true, error: error.message });
+                return;
+              }
+              setTimeout(attempt, SEQUENTIAL_MESSAGE_RETRY_MS);
               return;
             }
-            setTimeout(attempt, SEQUENTIAL_MESSAGE_RETRY_MS);
-            return;
+            resolve(response || { ok: false, hasStats: false });
           }
-          resolve(response || { ok: false, hasStats: false });
-        });
+        );
       };
       attempt();
     });

@@ -5,11 +5,6 @@
   const MAX_GRAPH_DEPTH = 18;
   const MAX_GRAPH_NODES = 12000;
   const USERNAME_RE = /^[A-Za-z0-9_]{1,15}$/;
-  const DEFAULT_DISPLAY_SETTINGS = Object.freeze({
-    feed: true,
-    userList: true,
-    updateOnlyExisting: false
-  });
   const BLOCKED_STATS_PATH_PREFIXES = ["/notifications"];
   const PROFILE_PATH_RE = /^\/([A-Za-z0-9_]{1,15})(?:\/)?$/;
   const RESERVED_PATHS = new Set([
@@ -76,6 +71,19 @@
       userList: source.userList !== false,
       updateOnlyExisting: source.updateOnlyExisting === true
     };
+  }
+
+  function shouldRunHoverFallback(context) {
+    const state = context && typeof context === "object" ? context : {};
+    if (state.documentHidden || state.inputFocused) {
+      return false;
+    }
+    const idleForMs = Number(state.idleForMs || 0);
+    const requiredIdleMs = Number(state.requiredIdleMs || 0);
+    if (idleForMs < requiredIdleMs) {
+      return false;
+    }
+    return Boolean(state.force || !state.alreadyAttempted);
   }
 
   function classifyStatsSurface(value) {
@@ -252,7 +260,7 @@
       text,
       kind,
       source,
-      capturedAt: typeof value.capturedAt === "string" ? value.capturedAt : new Date().toISOString()
+      capturedAt: typeof value.capturedAt === "string" ? value.capturedAt : ""
     };
   }
 
@@ -265,21 +273,65 @@
   }
 
   function mergeObservedPosts(currentPosts, incomingPosts) {
-    const result = [];
-    const seen = new Set();
-    for (const post of [...(incomingPosts || []), ...(currentPosts || [])]) {
+    const postsByKey = new Map();
+    for (const post of [...(currentPosts || []), ...(incomingPosts || [])]) {
       const normalizedPost = normalizeObservedPost(post);
       if (!normalizedPost) {
         continue;
       }
       const key = normalizedPost.id || normalizedPost.url || normalizedPost.text;
-      if (seen.has(key)) {
+      const existing = postsByKey.get(key);
+      if (!existing) {
+        postsByKey.set(key, normalizedPost);
         continue;
       }
-      seen.add(key);
-      result.push(normalizedPost);
+      const existingTimestamp = Date.parse(existing.capturedAt || "") || 0;
+      const nextTimestamp = Date.parse(normalizedPost.capturedAt || "") || 0;
+      if (
+        nextTimestamp > existingTimestamp
+        || (nextTimestamp === existingTimestamp && canonicalStringify(normalizedPost) > canonicalStringify(existing))
+      ) {
+        postsByKey.set(key, normalizedPost);
+      }
     }
-    return result.slice(0, 20);
+    return Array.from(postsByKey.values())
+      .sort((left, right) => {
+        const timeDifference = (Date.parse(right.capturedAt || "") || 0) - (Date.parse(left.capturedAt || "") || 0);
+        if (timeDifference) {
+          return timeDifference;
+        }
+        const leftKey = left.id || left.url || left.text;
+        const rightKey = right.id || right.url || right.text;
+        return leftKey.localeCompare(rightKey);
+      })
+      .slice(0, 20);
+  }
+
+  function canonicalStringify(value) {
+    const seen = new WeakSet();
+    function normalize(item) {
+      if (!item || typeof item !== "object") {
+        return item;
+      }
+      if (seen.has(item)) {
+        throw new TypeError("Cannot canonicalize circular data");
+      }
+      seen.add(item);
+      if (Array.isArray(item)) {
+        const result = item.map(normalize);
+        seen.delete(item);
+        return result;
+      }
+      const result = {};
+      for (const key of Object.keys(item).sort()) {
+        if (typeof item[key] !== "undefined") {
+          result[key] = normalize(item[key]);
+        }
+      }
+      seen.delete(item);
+      return result;
+    }
+    return JSON.stringify(normalize(value));
   }
 
   function mergeObservedUser(current, incoming, now) {
@@ -294,11 +346,34 @@
     const next = incoming && typeof incoming === "object" ? incoming : {};
     const followingCount = firstFiniteNumber(next.followingCount, existing.followingCount);
     const followersCount = firstFiniteNumber(next.followersCount, existing.followersCount);
+    const incomingHasStats = (
+      (Number.isFinite(next.followingCount) && Number.isFinite(next.followersCount))
+      || (Boolean(preferString(next.followingDisplay, "")) && Boolean(preferString(next.followersDisplay, "")))
+    );
+    const existingHasStats = (
+      (Number.isFinite(existing.followingCount) && Number.isFinite(existing.followersCount))
+      || (Boolean(preferString(existing.followingDisplay, "")) && Boolean(preferString(existing.followersDisplay, "")))
+    );
+    const existingStatsUpdatedAt = Number(existing.statsUpdatedAt || existing.updatedAt || 0);
+    const incomingStatsUpdatedAt = Number(next.statsUpdatedAt || next.updatedAt || 0);
+    const statsUpdatedAt = incomingHasStats
+      ? incomingStatsUpdatedAt || Date.parse(timestamp) || Date.now()
+      : existingHasStats
+        ? existingStatsUpdatedAt
+        : 0;
     const incomingPosts = [];
     if (Array.isArray(next.observedPosts)) {
-      incomingPosts.push(...next.observedPosts);
+      incomingPosts.push(...next.observedPosts.map(post => (
+        post && typeof post === "object" && !post.capturedAt
+          ? { ...post, capturedAt: timestamp }
+          : post
+      )));
     }
-    const singlePost = normalizeObservedPost(next.observedPost);
+    const singlePost = normalizeObservedPost(
+      next.observedPost && typeof next.observedPost === "object" && !next.observedPost.capturedAt
+        ? { ...next.observedPost, capturedAt: timestamp }
+        : next.observedPost
+    );
     if (singlePost) {
       incomingPosts.push(singlePost);
     }
@@ -320,7 +395,151 @@
       firstSeenAt: existing.firstSeenAt || timestamp,
       lastSeenAt: timestamp,
       updatedAt: Date.parse(timestamp) || Date.now(),
+      statsUpdatedAt,
       observedPosts: mergeObservedPosts(existing.observedPosts, incomingPosts)
+    };
+  }
+
+  function statsRecordTimestamp(user) {
+    const explicitTimestamp = Number(user && user.statsUpdatedAt || 0);
+    if (explicitTimestamp) {
+      return explicitTimestamp;
+    }
+    return hasCompleteStatsRecord(user) ? Number(user && user.updatedAt || 0) : 0;
+  }
+
+  function cacheRecordTimestamp(user) {
+    return Math.max(
+      Number(user && user.updatedAt || 0),
+      statsRecordTimestamp(user),
+      Date.parse(user && user.lastSeenAt ? user.lastSeenAt : "") || 0
+    );
+  }
+
+  function hasCompleteStatsRecord(user) {
+    if (!user || typeof user !== "object") {
+      return false;
+    }
+    const hasNumericCounts = firstFiniteNumber(user.followingCount) !== null
+      && firstFiniteNumber(user.followersCount) !== null;
+    const hasDisplayCounts = Boolean(preferString(user.followingDisplay, ""))
+      && Boolean(preferString(user.followersDisplay, ""));
+    return hasNumericCounts || hasDisplayCounts;
+  }
+
+  function isCachedStatsFresh(stats, options) {
+    if (!hasCompleteStatsRecord(stats)) {
+      return false;
+    }
+    const settings = options && typeof options === "object" ? options : {};
+    const now = Number.isFinite(settings.now) ? settings.now : Date.now();
+    const ttlMs = Number.isFinite(settings.ttlMs) ? settings.ttlMs : Infinity;
+    const minStatsUpdatedAt = Number(settings.minStatsUpdatedAt || 0);
+    const statsUpdatedAt = statsRecordTimestamp(stats);
+    return Boolean(
+      statsUpdatedAt
+      && now - statsUpdatedAt <= ttlMs
+      && statsUpdatedAt >= minStatsUpdatedAt
+    );
+  }
+
+  function mergeCachedUserRecords(current, incoming) {
+    const existing = current && typeof current === "object" ? current : null;
+    const next = incoming && typeof incoming === "object" ? incoming : null;
+    if (!existing) {
+      return next;
+    }
+    if (!next) {
+      return existing;
+    }
+    const existingUsername = normalizeUsername(existing.username);
+    const nextUsername = normalizeUsername(next.username);
+    if (!existingUsername || !nextUsername || existingUsername !== nextUsername) {
+      return null;
+    }
+
+    const existingTimestamp = cacheRecordTimestamp(existing);
+    const nextTimestamp = cacheRecordTimestamp(next);
+    const nextWinsRecord = nextTimestamp > existingTimestamp
+      || (nextTimestamp === existingTimestamp && canonicalStringify(next) > canonicalStringify(existing));
+    const newer = nextWinsRecord ? next : existing;
+    const older = newer === next ? existing : next;
+    const existingLastSeenAt = Date.parse(existing.lastSeenAt || "") || 0;
+    const nextLastSeenAt = Date.parse(next.lastSeenAt || "") || 0;
+    const nextWinsLastSeen = nextLastSeenAt > existingLastSeenAt
+      || (
+        nextLastSeenAt === existingLastSeenAt
+        && String(next.lastSeenAt || "") > String(existing.lastSeenAt || "")
+      );
+    const lastSeenAt = nextWinsLastSeen
+      ? next.lastSeenAt || existing.lastSeenAt || ""
+      : existing.lastSeenAt || next.lastSeenAt || "";
+    const mergeTimestamp = lastSeenAt || new Date(Math.max(existingTimestamp, nextTimestamp, 1)).toISOString();
+    const merged = mergeObservedUser(older, newer, mergeTimestamp);
+    if (!merged) {
+      return null;
+    }
+
+    const existingStatsTimestamp = statsRecordTimestamp(existing);
+    const nextStatsTimestamp = statsRecordTimestamp(next);
+    const nextWinsStats = nextStatsTimestamp > existingStatsTimestamp
+      || (nextStatsTimestamp === existingStatsTimestamp && canonicalStringify(next) > canonicalStringify(existing));
+    const statsWinner = nextWinsStats ? next : existing;
+    const followingCount = firstFiniteNumber(statsWinner.followingCount);
+    const followersCount = firstFiniteNumber(statsWinner.followersCount);
+    merged.followingCount = followingCount;
+    merged.followersCount = followersCount;
+    merged.followingDisplay = preferString(statsWinner.followingDisplay, "") || formatCompactCount(followingCount);
+    merged.followersDisplay = preferString(statsWinner.followersDisplay, "") || formatCompactCount(followersCount);
+    merged.statsUpdatedAt = Math.max(existingStatsTimestamp, nextStatsTimestamp);
+    merged.updatedAt = Math.max(existingTimestamp, nextTimestamp);
+    merged.sources = compactUniqueList([...(existing.sources || []), ...(next.sources || [])]).sort();
+    const existingFirstSeenAt = Date.parse(existing.firstSeenAt || "") || 0;
+    const nextFirstSeenAt = Date.parse(next.firstSeenAt || "") || 0;
+    merged.firstSeenAt = existingFirstSeenAt && nextFirstSeenAt
+      ? existingFirstSeenAt <= nextFirstSeenAt ? existing.firstSeenAt : next.firstSeenAt
+      : existing.firstSeenAt || next.firstSeenAt || merged.firstSeenAt;
+    if (lastSeenAt) {
+      merged.lastSeenAt = lastSeenAt;
+    } else {
+      delete merged.lastSeenAt;
+    }
+    return merged;
+  }
+
+  function reconcileUserCaches(currentCache, incomingCache) {
+    const current = currentCache && typeof currentCache === "object" && !Array.isArray(currentCache)
+      ? currentCache
+      : {};
+    const incoming = incomingCache && typeof incomingCache === "object" && !Array.isArray(incomingCache)
+      ? incomingCache
+      : {};
+    const normalizedIncoming = {};
+    const reconciled = {};
+
+    for (const [rawUsername, user] of Object.entries(incoming)) {
+      const username = normalizeUsername(rawUsername);
+      if (!username || !user || typeof user !== "object") {
+        continue;
+      }
+      const normalizedRecord = { ...user, username };
+      normalizedIncoming[username] = mergeCachedUserRecords(normalizedRecord, normalizedRecord);
+      reconciled[username] = normalizedIncoming[username];
+    }
+    for (const [rawUsername, user] of Object.entries(current)) {
+      const username = normalizeUsername(rawUsername);
+      if (!username || !user || typeof user !== "object") {
+        continue;
+      }
+      const normalizedCurrent = { ...user, username };
+      reconciled[username] = reconciled[username]
+        ? mergeCachedUserRecords(normalizedCurrent, reconciled[username])
+        : mergeCachedUserRecords(normalizedCurrent, normalizedCurrent);
+    }
+
+    return {
+      cache: reconciled,
+      needsPersist: canonicalStringify(reconciled) !== canonicalStringify(normalizedIncoming)
     };
   }
 
@@ -951,6 +1170,7 @@
 
   global.XFollowStatsCore = {
     SOURCE,
+    canonicalStringify,
     collectUserStats,
     classifyStatsSurface,
     exportUsersToCsv,
@@ -958,6 +1178,8 @@
     findNameLinkInAnchors,
     formatCompactCount,
     isStatsAllowedPath,
+    isCachedStatsFresh,
+    mergeCachedUserRecords,
     mergeObservedUser,
     normalizeDisplaySettings,
     normalizePostKind,
@@ -967,7 +1189,9 @@
     normalizeUsername,
     parseImportedUsers,
     parseStatsText,
+    reconcileUserCaches,
     selectObservedPost,
+    shouldRunHoverFallback,
     userHasCommentSource,
     userHasNonCommentSource,
     userSurfaceSources,

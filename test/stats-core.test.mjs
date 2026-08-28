@@ -55,18 +55,32 @@ assert.equal(i18n.getMessage("pillStatsText", ["388", "26K"], "en"), "388 Follow
 assert.match(i18n.getMessage("tooltipLockList", [], "zh_CN"), /不会把新看到的账号加入管理页/);
 assert.match(i18n.getMessage("tooltipSequentialUpdate", [], "en"), /one selected profile at a time/);
 assert.match(i18nSource, /data-i18n-tooltip/);
-assert.ok(manifest.content_scripts[0].js.indexOf("i18n.js") > manifest.content_scripts[0].js.indexOf("stats-core.js"));
-assert.ok(manifest.content_scripts[0].js.indexOf("i18n.js") < manifest.content_scripts[0].js.indexOf("content.js"));
+assert.ok(manifest.content_scripts[1].js.indexOf("i18n.js") > manifest.content_scripts[1].js.indexOf("stats-core.js"));
+assert.ok(manifest.content_scripts[1].js.indexOf("i18n.js") < manifest.content_scripts[1].js.indexOf("content.js"));
 
 const defaultSettings = core.normalizeDisplaySettings();
 assert.equal(defaultSettings.feed, true);
 assert.equal(defaultSettings.userList, true);
 assert.equal(defaultSettings.updateOnlyExisting, false);
+assert.equal(Object.prototype.hasOwnProperty.call(defaultSettings, "silentMode"), false);
 const feedOffSettings = core.normalizeDisplaySettings({ feed: false, userList: true });
 assert.equal(feedOffSettings.feed, false);
 assert.equal(feedOffSettings.userList, true);
 const updateOnlySettings = core.normalizeDisplaySettings({ updateOnlyExisting: true });
 assert.equal(updateOnlySettings.updateOnlyExisting, true);
+assert.equal(Object.prototype.hasOwnProperty.call(core.normalizeDisplaySettings({ silentMode: false }), "silentMode"), false);
+assert.equal(
+  core.shouldRunHoverFallback({ idleForMs: 5000, requiredIdleMs: 1500, alreadyAttempted: false }),
+  true
+);
+assert.equal(
+  core.shouldRunHoverFallback({ idleForMs: 200, requiredIdleMs: 1500, alreadyAttempted: false }),
+  false
+);
+assert.equal(
+  core.shouldRunHoverFallback({ idleForMs: 5000, requiredIdleMs: 1500, inputFocused: true }),
+  false
+);
 assert.equal(core.classifyStatsSurface({ isTweet: true, isUserCell: false }), "feed");
 assert.equal(core.classifyStatsSurface({ isTweet: false, isUserCell: true }), "userList");
 assert.equal(core.classifyStatsSurface({ isTweet: false, isUserCell: false }), "userList");
@@ -143,6 +157,216 @@ assert.equal(mergedUser.followersCount, 868000);
 assert.equal(mergedUser.sources.join("|"), "userList|feed");
 assert.equal(mergedUser.observedPosts.length, 1);
 assert.equal(mergedUser.observedPosts[0].text, "Shipping a tiny product today.");
+
+const statsTimestamp = Date.parse("2026-05-01T00:00:00.000Z");
+const profileOnlyRefresh = core.mergeObservedUser(
+  {
+    username: "quiet_mode_user",
+    followingCount: 12,
+    followersCount: 34,
+    statsUpdatedAt: statsTimestamp
+  },
+  { username: "quiet_mode_user", displayName: "Quiet Mode User", sources: ["feed"] },
+  "2026-05-20T00:00:00.000Z"
+);
+assert.equal(profileOnlyRefresh.statsUpdatedAt, statsTimestamp);
+assert.equal(profileOnlyRefresh.lastSeenAt, "2026-05-20T00:00:00.000Z");
+
+const statsRefresh = core.mergeObservedUser(
+  profileOnlyRefresh,
+  { username: "quiet_mode_user", followingCount: 13, followersCount: 35 },
+  "2026-05-21T00:00:00.000Z"
+);
+assert.equal(statsRefresh.statsUpdatedAt, Date.parse("2026-05-21T00:00:00.000Z"));
+
+const freshnessNow = Date.parse("2026-05-21T00:00:10.000Z");
+assert.equal(
+  core.isCachedStatsFresh(
+    { username: "fresh", followingCount: 0, followersCount: 0, statsUpdatedAt: freshnessNow - 4000 },
+    { now: freshnessNow, ttlMs: 5000, minStatsUpdatedAt: freshnessNow - 4000 }
+  ),
+  true
+);
+assert.equal(
+  core.isCachedStatsFresh(
+    { username: "expired", followingCount: 1, followersCount: 2, statsUpdatedAt: freshnessNow - 5001 },
+    { now: freshnessNow, ttlMs: 5000 }
+  ),
+  false
+);
+assert.equal(
+  core.isCachedStatsFresh(
+    { username: "before_request", followingCount: 1, followersCount: 2, statsUpdatedAt: freshnessNow - 100 },
+    { now: freshnessNow, ttlMs: 5000, minStatsUpdatedAt: freshnessNow - 99 }
+  ),
+  false
+);
+assert.equal(
+  core.isCachedStatsFresh(
+    { username: "legacy", followingDisplay: "1", followersDisplay: "2", updatedAt: freshnessNow - 100 },
+    { now: freshnessNow, ttlMs: 5000, minStatsUpdatedAt: freshnessNow - 100 }
+  ),
+  true
+);
+
+const mergedCacheRecord = core.mergeCachedUserRecords(
+  {
+    username: "cache_merge",
+    displayName: "Local profile",
+    followingCount: 10,
+    followersCount: 20,
+    followingDisplay: "10",
+    followersDisplay: "20",
+    statsUpdatedAt: 2000,
+    updatedAt: 3000,
+    lastSeenAt: "2026-05-20T00:00:03.000Z",
+    sources: ["feed"],
+    observedPosts: [{ id: "local-post", text: "local", source: "feed" }]
+  },
+  {
+    username: "cache_merge",
+    displayName: "External profile",
+    followingCount: 11,
+    followersCount: 21,
+    followingDisplay: "11",
+    followersDisplay: "21",
+    statsUpdatedAt: 4000,
+    updatedAt: 4000,
+    lastSeenAt: "2026-05-20T00:00:04.000Z",
+    sources: ["userList"],
+    observedPosts: [{ id: "external-post", text: "external", source: "feed" }]
+  }
+);
+assert.equal(mergedCacheRecord.displayName, "External profile");
+assert.equal(mergedCacheRecord.followingCount, 11);
+assert.equal(mergedCacheRecord.followersCount, 21);
+assert.equal(mergedCacheRecord.statsUpdatedAt, 4000);
+assert.deepEqual(Array.from(mergedCacheRecord.sources), ["feed", "userList"]);
+assert.deepEqual(Array.from(mergedCacheRecord.observedPosts, post => post.id), ["external-post", "local-post"]);
+
+const sameMillisecondMerge = core.mergeCachedUserRecords(
+  {
+    username: "same_ms",
+    followingCount: 1,
+    followersCount: 2,
+    statsUpdatedAt: 5000,
+    updatedAt: 5000,
+    sources: ["feed"],
+    observedPosts: [{ id: "local-same-ms", text: "local" }]
+  },
+  {
+    username: "same_ms",
+    followingCount: 3,
+    followersCount: 4,
+    statsUpdatedAt: 5000,
+    updatedAt: 5000,
+    sources: ["userList"],
+    observedPosts: [{ id: "external-same-ms", text: "external" }]
+  }
+);
+assert.equal(sameMillisecondMerge.followingCount, 3);
+assert.equal(sameMillisecondMerge.followersCount, 4);
+assert.deepEqual(Array.from(sameMillisecondMerge.sources), ["feed", "userList"]);
+assert.deepEqual(
+  new Set(Array.from(sameMillisecondMerge.observedPosts, post => post.id)),
+  new Set(["local-same-ms", "external-same-ms"])
+);
+
+const displayOnlyMerge = core.mergeCachedUserRecords(
+  {
+    username: "display_only",
+    followingCount: 100,
+    followersCount: 200,
+    statsUpdatedAt: 5000,
+    updatedAt: 5000
+  },
+  {
+    username: "display_only",
+    followingDisplay: "101",
+    followersDisplay: "201",
+    statsUpdatedAt: 6000,
+    updatedAt: 6000
+  }
+);
+assert.equal(displayOnlyMerge.followingCount, null);
+assert.equal(displayOnlyMerge.followersCount, null);
+assert.equal(displayOnlyMerge.followingDisplay, "101");
+assert.equal(displayOnlyMerge.followersDisplay, "201");
+
+assert.equal(
+  core.canonicalStringify({ b: 2, a: { d: 4, c: 3 } }),
+  core.canonicalStringify({ a: { c: 3, d: 4 }, b: 2 })
+);
+const reconciledCaches = core.reconcileUserCaches(
+  {
+    converge_user: {
+      username: "converge_user",
+      followingCount: 1,
+      followersCount: 2,
+      statsUpdatedAt: 7000,
+      updatedAt: 7000,
+      sources: ["feed"],
+      observedPosts: [{ id: "local-converge", text: "local", capturedAt: "2026-05-21T00:00:07.000Z" }]
+    },
+    local_only: { username: "local_only", displayName: "Local only", updatedAt: 7000 }
+  },
+  {
+    converge_user: {
+      username: "converge_user",
+      followingCount: 3,
+      followersCount: 4,
+      statsUpdatedAt: 8000,
+      updatedAt: 8000,
+      sources: ["userList"],
+      observedPosts: [{ id: "external-converge", text: "external", capturedAt: "2026-05-21T00:00:08.000Z" }]
+    }
+  }
+);
+assert.equal(reconciledCaches.needsPersist, true);
+assert.ok(reconciledCaches.cache.local_only);
+assert.deepEqual(
+  new Set(Array.from(reconciledCaches.cache.converge_user.observedPosts, post => post.id)),
+  new Set(["local-converge", "external-converge"])
+);
+const convergedAgain = core.reconcileUserCaches(reconciledCaches.cache, reconciledCaches.cache);
+assert.equal(convergedAgain.needsPersist, false);
+assert.equal(
+  core.canonicalStringify(convergedAgain.cache),
+  core.canonicalStringify(reconciledCaches.cache)
+);
+
+const equalTimeLeft = {
+  username: "commutative",
+  displayName: "Left",
+  followingCount: 1,
+  followersCount: 2,
+  statsUpdatedAt: 9000,
+  updatedAt: 9000,
+  sources: ["feed"],
+  observedPosts: Array.from({ length: 15 }, (_, index) => ({
+    id: `left-${index}`,
+    text: `left ${index}`,
+    capturedAt: `2026-05-21T00:00:${String(index).padStart(2, "0")}.000Z`
+  }))
+};
+const equalTimeRight = {
+  username: "commutative",
+  displayName: "Right",
+  followingCount: 3,
+  followersCount: 4,
+  statsUpdatedAt: 9000,
+  updatedAt: 9000,
+  sources: ["userList"],
+  observedPosts: Array.from({ length: 15 }, (_, index) => ({
+    id: `right-${index}`,
+    text: `right ${index}`,
+    capturedAt: `2026-05-21T00:01:${String(index).padStart(2, "0")}.000Z`
+  }))
+};
+const leftThenRight = core.mergeCachedUserRecords(equalTimeLeft, equalTimeRight);
+const rightThenLeft = core.mergeCachedUserRecords(equalTimeRight, equalTimeLeft);
+assert.equal(core.canonicalStringify(leftThenRight), core.canonicalStringify(rightThenLeft));
+assert.equal(leftThenRight.observedPosts.length, 20);
 
 const feedThenUserList = core.mergeObservedUser(
   mergedUser,
@@ -484,12 +708,39 @@ assert.match(popupCss, /\.has-tooltip:hover::after/);
 assert.match(popupCss, /transition-delay:\s*0ms/);
 assert.match(contentCss, /\.xfs-userlist-anchor[\s\S]*?display:\s*flex/);
 assert.match(contentCss, /\.xfs-userlist-anchor \.xfs-stats-pill[\s\S]*?margin-left:\s*0/);
+assert.match(contentCss, /data-xfs-silent-card="1"/);
 assert.match(managerCss, /\.count-column,[\s\S]*?white-space:\s*nowrap/);
-assert.match(contentSource, /persistCacheNow\(\);\s*\n\s*updateVisibleCells\(username\);/);
+assert.match(contentSource, /if \(hidden\)[\s\S]*?new FocusEvent\("focusin"[\s\S]*?else if[\s\S]*?target\.focus\s*\(/);
+assert.match(contentSource, /schedulePassiveLookup\(profile,\s*cell,\s*surface/);
+assert.doesNotMatch(contentSource, /state\.settings\.silentMode/);
+assert.match(contentSource, /mode:\s*"background"[\s\S]*?mode:\s*"fallback"/);
+assert.match(contentSource, /traceHover\(profile\.username,\s*"automatic-fallback"/);
+assert.doesNotMatch(contentSource, /hiddenHoverFallback/);
+assert.match(contentSource, /idleScanTimer/);
+assert.match(contentSource, /state\.hoverAttempts\.delete\(item\.profile\.username\)/);
+assert.match(contentSource, /\[data-testid="HoverCard"\]/);
+assert.doesNotMatch(contentSource, /\[data-testid\*=\\?"Hover/);
+assert.match(contentSource, /state\.earlyUsers/);
+assert.match(contentSource, /type:\s*"content-ready"/);
+const storeUsersSource = contentSource.slice(
+  contentSource.indexOf("function storeUsers"),
+  contentSource.indexOf("function mergeUserRecord")
+);
+assert.equal((storeUsersSource.match(/persistCacheNow\(\)/g) || []).length, 1);
+assert.match(contentSource, /mergeExternalCache/);
+assert.match(managerSource, /type:\s*"xfs:updateProfileStats",\s*username,\s*force:\s*true/);
+assert.match(managerSource, /refreshRequestedAt\s*=\s*Date\.now\(\)[\s\S]*?openOrNavigateSequentialTab/);
+assert.match(managerSource, /xfs:updateProfileStats",\s*username,\s*force:\s*true,\s*refreshRequestedAt/);
+assert.match(contentSource, /performProfileStatsUpdate\(message\.username,\s*Boolean\(message\.force\),\s*message\.refreshRequestedAt\)/);
+assert.match(contentSource, /hasVisibleHoverCard\(\)/);
 assert.match(popupSource, /clearButton\.addEventListener\("click", clearCache\)/);
 assert.match(popupSource, /lockListToggle/);
 assert.match(popupSource, /updateOnlyExisting:\s*lockListToggle\.checked/);
 assert.match(popupSource, /lockListToggle\.checked = normalized\.updateOnlyExisting/);
+assert.doesNotMatch(popupSource, /silentMode|silentModeToggle/);
+assert.doesNotMatch(popupHtml, /silent-mode-toggle|popupSilentMode|tooltipSilentMode/);
+assert.doesNotMatch(i18nSource, /popupSilentMode|tooltipSilentMode|静默模式|Silent mode/);
+assert.doesNotMatch(popupHtml, /popupHiddenHoverFallback|hidden-hover-toggle/);
 assert.match(popupSource, /chrome\.storage\.local\.set\(\{\s*\[STORAGE_KEY\]:\s*\{\}\s*\}\)/);
 assert.match(contentSource, /changes\[STORAGE_KEY\]/);
 assert.match(contentSource, /clearLocalCache\(\);/);
@@ -501,7 +752,7 @@ assert.match(contentSource, /xfs-stats-pill\[data-xfs-state="loading"\]/);
 assert.match(contentSource, /t\("pillStatsText"/);
 assert.match(contentSource, /t\("pillWaitingData"\)/);
 assert.doesNotMatch(contentSource, /等待数据|读取中|正在读取头像悬停卡片/);
-assert.match(contentSource, /queueHover\(profile,\s*cell,\s*surface/);
+assert.doesNotMatch(contentSource, /AUTO_HOVER_RETRY_MS/);
 assert.match(contentSource, /ensureUserListPillAnchor/);
 assert.match(contentSource, /xfs-userlist-anchor/);
 assert.match(contentSource, /findHandleRowAfterNameLink/);
@@ -525,3 +776,13 @@ assert.match(popupSource, /chrome\.storage\.local\.set\(\{\s*\[LANGUAGE_KEY\]/);
 assert.match(contentSource, /LANGUAGE_KEY/);
 assert.match(contentSource, /xfs:updateLanguage/);
 assert.match(contentSource, /XFSI18n/);
+assert.equal(manifest.content_scripts[0].world, "MAIN");
+assert.deepEqual(Array.from(manifest.content_scripts[0].js), ["page-hook-core.js", "page-hook.js"]);
+assert.equal(manifest.content_scripts[0].js.includes("stats-core.js"), false);
+assert.equal(manifest.content_scripts[1].world, "ISOLATED");
+assert.deepEqual(Array.from(manifest.content_scripts[1].js), ["stats-core.js", "i18n.js", "content.js"]);
+assert.deepEqual(
+  manifest.content_scripts[0].js.filter(file => manifest.content_scripts[1].js.includes(file)),
+  []
+);
+assert.equal(manifest.web_accessible_resources, undefined);

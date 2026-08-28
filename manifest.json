@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "__MSG_extensionName__",
-  "version": "1.0.0",
+  "version": "1.1.4",
   "default_locale": "en",
   "description": "__MSG_extensionDescription__",
   "icons": {
@@ -25,15 +25,16 @@
   "content_scripts": [
     {
       "matches": ["https://x.com/*", "https://twitter.com/*"],
-      "js": ["stats-core.js", "i18n.js", "content.js", "injector.js"],
-      "css": ["content.css"],
-      "run_at": "document_start"
-    }
-  ],
-  "web_accessible_resources": [
+      "js": ["page-hook-core.js", "page-hook.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
     {
-      "resources": ["stats-core.js", "i18n.js", "page-hook.js"],
-      "matches": ["https://x.com/*", "https://twitter.com/*"]
+      "matches": ["https://x.com/*", "https://twitter.com/*"],
+      "js": ["stats-core.js", "i18n.js", "content.js"],
+      "css": ["content.css"],
+      "run_at": "document_start",
+      "world": "ISOLATED"
     }
   ]
 }

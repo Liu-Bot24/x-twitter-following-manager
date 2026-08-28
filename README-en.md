@@ -21,6 +21,7 @@ It is useful for cleaning up accounts you already follow, reviewing accounts you
 ## Features
 
 - Show following and follower counts directly in feeds and user-list areas.
+- Read following counts in the background first, then automatically use the compatibility path if background reading fails.
 - Toggle count labels for Feed and user-list surfaces.
 - Collect browsed or imported accounts into a local manager page.
 - Search by display name, handle, bio, website, and browsed post text.
@@ -64,6 +65,8 @@ The popup provides quick controls:
 - **Clear cache**: clears locally saved account data.
 
 The extension does not show stats labels on X/Twitter notification pages, because notification rows often mix likes, replies, avatars, and grouped activity in ways that can cause false matches.
+
+The extension chooses the available reading path automatically. It tries background reading first. If no counts arrive and you are not typing or using the page, it automatically uses the compatibility path. A profile card may appear briefly during compatibility reading. Page activity pauses the lookup and it retries after the page becomes idle.
 
 ![Account stats shown in user lists and right-side user modules](docs/assets/screenshot-111.jpg)
 

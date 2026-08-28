@@ -45,16 +45,14 @@
     const response = await sendToActiveTab("xfs:status", {}, { quiet: true });
     if (!response || !response.ok) {
       visibleCount.textContent = "-";
-      status.textContent = t("popupUseOnX");
+      status.textContent = await isActiveTabOnX() ? t("popupScriptNotReady") : t("popupUseOnX");
       return;
     }
     renderStatus(response.status);
   }
 
   async function updateSettings() {
-    const currentSettings = await readRawSettings();
     const settings = {
-      ...currentSettings,
       feed: feedToggle.checked,
       userList: userListToggle.checked,
       updateOnlyExisting: lockListToggle.checked
@@ -188,6 +186,16 @@
       userList: source.userList !== false,
       updateOnlyExisting: source.updateOnlyExisting === true
     };
+  }
+
+  async function isActiveTabOnX() {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    try {
+      const url = new URL(tab && tab.url ? tab.url : "");
+      return url.protocol === "https:" && (url.hostname === "x.com" || url.hostname === "twitter.com");
+    } catch {
+      return false;
+    }
   }
 
   function applyStaticI18n() {

@@ -13,17 +13,22 @@
   const LANGUAGE_KEY = i18n ? i18n.LANGUAGE_KEY : "xfs:languagePreferenceV1";
   const CACHE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
   const SCAN_DEBOUNCE_MS = 180;
-  const HOVER_DELAY_MS = 850;
+  const API_GRACE_MS = 300;
+  const SILENT_HOVER_TIMEOUT_MS = 1000;
   const HOVER_TIMEOUT_MS = 3200;
-  const AUTO_HOVER_RETRY_MS = 15 * 1000;
+  const HOVER_RETRY_MS = 15000;
+  const USER_IDLE_BEFORE_HOVER_MS = 650;
+  const HOVER_DIAGNOSTICS_ENABLED = false;
+  const HOVER_DIAGNOSTICS_LIMIT = 200;
+  const LAST_SEEN_PERSIST_INTERVAL_MS = 5 * 60 * 1000;
   const FALLBACK_MESSAGES = {
     followersLabel: "Followers",
     followingLabel: "Following",
     listSeparator: ", ",
-    pillHoverInterruptedTitle: "Hover card reading was interrupted by the page. The extension will keep retrying.",
-    pillHoverMissingTitle: "No hover card was read this time. The extension will keep retrying.",
-    pillHoverReadingTitle: "Reading avatar hover card.",
-    pillLoadingFullTitle: "Getting counts from X page data and avatar hover cards.",
+    pillHoverInterruptedTitle: "Reading paused while you use the page. It will retry when the page is idle.",
+    pillHoverMissingTitle: "Counts were not available yet. The extension will retry.",
+    pillHoverReadingTitle: "Reading following counts.",
+    pillLoadingFullTitle: "Waiting for counts from X page data.",
     pillLoadingShortTitle: "Reading counts.",
     pillReading: "Reading",
     pillStatsText: "$1 Following · $2 Followers",
@@ -34,25 +39,44 @@
   };
 
   const state = {
+    activeHoverTarget: null,
+    activeHoverSilentMode: true,
+    activeHoverUsername: "",
+    activeHoverWatcher: null,
+    activeSilentCards: new Set(),
     cache: new Map(),
     cleanupCallbacks: [],
-    hoverAttempts: new Map(),
+    earlyUsers: [],
+    hoverAttempts: new Set(),
+    hoverDeferTimers: new Map(),
+    hoverDiagnostics: [],
+    hoverJobSequence: 0,
     hoverQueue: [],
     hoverRetryTimers: new Map(),
     hovering: false,
+    initialized: false,
     intersectionObserver: null,
+    lastUserActivityAt: 0,
     languagePreference: null,
     mutationObserver: null,
+    pendingLookups: new Set(),
+    pendingPersistSnapshot: "",
     pendingSaveTimer: 0,
+    persistInFlight: null,
+    persistRequested: false,
+    persistError: "",
+    idleScanTimer: 0,
     scanTimer: 0,
     settings: core.normalizeDisplaySettings(),
     startedAt: Date.now(),
     statsFromApi: 0,
-    statsFromHover: 0
+    statsFromHover: 0,
+    userActivityVersion: 0
   };
 
   addEventListener("message", onPageMessage);
   state.cleanupCallbacks.push(() => removeEventListener("message", onPageMessage));
+  notifyContentReady();
 
   chrome.runtime.onMessage.addListener(onRuntimeMessage);
   state.cleanupCallbacks.push(() => chrome.runtime.onMessage.removeListener(onRuntimeMessage));
@@ -67,7 +91,7 @@
         sendResponse({ ok: true, status: getStatus() });
         return false;
       }
-      scanStatsSurfaces({ forceHover: true });
+      scanStatsSurfaces({ forceFallback: true });
       sendResponse({ ok: true, status: getStatus() });
       return false;
     }
@@ -76,7 +100,7 @@
       return false;
     }
     if (message.type === "xfs:updateProfileStats") {
-      performProfileStatsUpdate(message.username)
+      performProfileStatsUpdate(message.username, Boolean(message.force), message.refreshRequestedAt)
         .then(result => sendResponse(result))
         .catch(error => {
           sendResponse({
@@ -97,7 +121,7 @@
       state.settings = core.normalizeDisplaySettings(message.settings);
       chrome.storage.local.set({ [SETTINGS_KEY]: state.settings });
       removeDisabledPills();
-      scanStatsSurfaces({ forceHover: false });
+      scanStatsSurfaces({ forceFallback: false });
       sendResponse({ ok: true, status: getStatus() });
       return false;
     }
@@ -113,6 +137,11 @@
   }
 
   Promise.all([loadCache(), loadSettings(), loadLanguagePreference()]).then(() => {
+    state.initialized = true;
+    if (state.earlyUsers.length > 0) {
+      const earlyUsers = state.earlyUsers.splice(0);
+      storeUsers(earlyUsers, "pageData");
+    }
     document.querySelectorAll(".xfs-stats-pill").forEach(pill => pill.remove());
     setupObservers();
     scheduleScan(0);
@@ -121,18 +150,20 @@
   window.__xFollowStatsContentCleanup = cleanup;
 
   function cleanup() {
+    cancelHiddenHover();
     clearTimeout(state.scanTimer);
+    clearTimeout(state.idleScanTimer);
     clearTimeout(state.pendingSaveTimer);
+    state.hoverRetryTimers.forEach(timer => clearTimeout(timer));
+    state.hoverRetryTimers.clear();
+    state.hoverDeferTimers.forEach(timer => clearTimeout(timer));
+    state.hoverDeferTimers.clear();
     if (state.mutationObserver) {
       state.mutationObserver.disconnect();
     }
     if (state.intersectionObserver) {
       state.intersectionObserver.disconnect();
     }
-    for (const timer of state.hoverRetryTimers.values()) {
-      clearTimeout(timer);
-    }
-    state.hoverRetryTimers.clear();
     state.cleanupCallbacks.forEach(callback => callback());
     state.cleanupCallbacks.length = 0;
     if (window.__xFollowStatsContentCleanup === cleanup) {
@@ -144,24 +175,42 @@
     if (event.source !== window || !event.data || event.data.source !== SOURCE) {
       return;
     }
+    if (event.data.type === "hook-ready") {
+      notifyContentReady();
+      return;
+    }
     if (event.data.type === "users") {
       if (!isPageAllowed()) {
+        return;
+      }
+      if (!state.initialized) {
+        state.earlyUsers.push(...(Array.isArray(event.data.users) ? event.data.users : []));
         return;
       }
       storeUsers(event.data.users, "pageData");
     }
   }
 
+  function notifyContentReady() {
+    window.postMessage({ source: SOURCE, type: "content-ready" }, window.location.origin);
+  }
+
   function setupObservers() {
-    state.mutationObserver = new MutationObserver(() => scheduleScan(SCAN_DEBOUNCE_MS));
+    state.mutationObserver = new MutationObserver(() => {
+      pruneSilentCards();
+      scheduleScan(SCAN_DEBOUNCE_MS);
+    });
     observeDocument();
 
     const storageListener = changes => {
       if (changes[STORAGE_KEY]) {
-        if (isEmptyCacheValue(changes[STORAGE_KEY].newValue)) {
+        const nextCache = changes[STORAGE_KEY].newValue;
+        if (isOwnPersistedCache(nextCache)) {
+          // The in-memory cache already contains this snapshot or a newer one.
+        } else if (isEmptyCacheValue(nextCache)) {
           clearLocalCache();
         } else {
-          syncLocalCache(changes[STORAGE_KEY].newValue);
+          mergeExternalCache(nextCache);
         }
       }
       if (changes[SETTINGS_KEY]) {
@@ -192,7 +241,9 @@
           }
           const profile = readProfileFromCell(cell, surface);
           if (profile && shouldRecordUsername(profile.username) && !getFreshCachedStats(profile.username)) {
-            queueHover(profile, cell, surface);
+            schedulePassiveLookup(profile, cell, surface);
+          } else if (profile && getFreshCachedStats(profile.username)) {
+            state.intersectionObserver.unobserve(cell);
           }
         }
       },
@@ -206,6 +257,17 @@
     };
     document.addEventListener("visibilitychange", visibilityListener);
     state.cleanupCallbacks.push(() => document.removeEventListener("visibilitychange", visibilityListener));
+
+    const userActivityEvents = ["pointermove", "pointerdown", "wheel", "keydown", "scroll"];
+    const markUserActivity = () => {
+      state.lastUserActivityAt = Date.now();
+      cancelHiddenHover();
+      scheduleIdleScan();
+    };
+    userActivityEvents.forEach(type => document.addEventListener(type, markUserActivity, { capture: true, passive: true }));
+    state.cleanupCallbacks.push(() => {
+      userActivityEvents.forEach(type => document.removeEventListener(type, markUserActivity, true));
+    });
   }
 
   function observeDocument() {
@@ -219,17 +281,16 @@
 
   function scheduleScan(delay) {
     clearTimeout(state.scanTimer);
-    state.scanTimer = setTimeout(() => scanStatsSurfaces({ forceHover: false }), delay);
+    state.scanTimer = setTimeout(() => scanStatsSurfaces({ forceFallback: false }), delay);
   }
 
   function clearLocalCache() {
     state.cache.clear();
     state.hoverAttempts.clear();
+    state.hoverDeferTimers.forEach(timer => clearTimeout(timer));
+    state.hoverDeferTimers.clear();
     state.hoverQueue.length = 0;
-    for (const timer of state.hoverRetryTimers.values()) {
-      clearTimeout(timer);
-    }
-    state.hoverRetryTimers.clear();
+    state.pendingLookups.clear();
     removeAllPills();
   }
 
@@ -268,7 +329,7 @@
       if (!profile || profile.username !== username) {
         return;
       }
-      queueHover(profile, cell, surface);
+      schedulePassiveLookup(profile, cell, surface);
     });
   }
 
@@ -319,12 +380,17 @@
       return;
     }
 
+    removeMismatchedPills(cell, profile.username, surface);
+
     storeObservedUser(profile, cell, surface);
     cell.dataset.xfsUsername = profile.username;
     cell.dataset.xfsSurface = surface;
     const cachedStats = getFreshCachedStats(profile.username);
     if (cachedStats) {
       renderStats(ensurePill(cell, profile, surface), cachedStats);
+      if (state.intersectionObserver) {
+        state.intersectionObserver.unobserve(cell);
+      }
       return;
     }
     const pill = ensurePill(cell, profile, surface);
@@ -335,9 +401,32 @@
     if (state.intersectionObserver) {
       state.intersectionObserver.observe(cell);
     }
-    queueHover(profile, cell, surface);
-    if (options && options.forceHover) {
-      queueHover(profile, cell, surface, { force: true });
+    schedulePassiveLookup(profile, cell, surface, {
+      forceFallback: Boolean(options && options.forceFallback)
+    });
+  }
+
+  async function schedulePassiveLookup(profile, cell, surface, options) {
+    if (!profile || !cell || document.hidden || !isSurfaceEnabled(surface)) {
+      return;
+    }
+    const key = `${profile.username}:${surface}`;
+    if (state.pendingLookups.has(key)) {
+      return;
+    }
+    state.pendingLookups.add(key);
+    try {
+      const stats = await waitForCachedStats(profile.username, API_GRACE_MS);
+      if (stats) {
+        updateVisibleCells(profile.username);
+        if (state.intersectionObserver) {
+          state.intersectionObserver.unobserve(cell);
+        }
+        return;
+      }
+      queueHover(profile, cell, surface, { force: Boolean(options && options.forceFallback) });
+    } finally {
+      state.pendingLookups.delete(key);
     }
   }
 
@@ -469,6 +558,7 @@
 
   function storeObservedUser(profile, cell, surface) {
     const observedPost = surface === "feed" ? readTweetPost(cell, profile.username) : null;
+    const existing = state.cache.get(profile.username);
     const observedUser = {
       username: profile.username,
       displayName: profile.displayName,
@@ -479,31 +569,30 @@
     if (observedPost) {
       observedUser.observedPost = observedPost;
     }
-    mergeUserRecord(observedUser);
+    const lastSeenAt = Date.parse(existing && existing.lastSeenAt ? existing.lastSeenAt : "") || 0;
+    const existingPosts = existing && Array.isArray(existing.observedPosts) ? existing.observedPosts : [];
+    const hasNewPost = Boolean(observedPost && !existingPosts.some(post => (
+      (observedPost.id && post.id === observedPost.id)
+      || (observedPost.url && post.url === observedPost.url)
+      || (!observedPost.id && !observedPost.url && post.text === observedPost.text)
+    )));
+    const profileChanged = !existing
+      || observedUser.displayName !== (existing.displayName || "")
+      || (observedUser.avatarUrl && observedUser.avatarUrl !== (existing.avatarUrl || ""));
+    const shouldPersist = profileChanged || hasNewPost || Date.now() - lastSeenAt >= LAST_SEEN_PERSIST_INTERVAL_MS;
+    mergeUserRecord(observedUser, { scheduleSave: shouldPersist });
   }
 
-  function getFreshCachedStats(username) {
+  function getFreshCachedStats(username, minStatsUpdatedAt) {
     const stats = state.cache.get(username);
-    if (!stats) {
-      return null;
-    }
-    if (Date.now() - Number(stats.updatedAt || 0) > CACHE_TTL_MS) {
-      state.cache.delete(username);
-      return null;
-    }
-    if (!hasDisplayableStats(stats)) {
+    if (!core.isCachedStatsFresh(stats, {
+      now: Date.now(),
+      ttlMs: CACHE_TTL_MS,
+      minStatsUpdatedAt
+    })) {
       return null;
     }
     return stats;
-  }
-
-  function hasDisplayableStats(stats) {
-    if (!stats || typeof stats !== "object") {
-      return false;
-    }
-    const followingDisplay = stats.followingDisplay || core.formatCompactCount(stats.followingCount);
-    const followersDisplay = stats.followersDisplay || core.formatCompactCount(stats.followersCount);
-    return Boolean(followingDisplay && followersDisplay);
   }
 
   function storeUsers(users, source) {
@@ -511,6 +600,7 @@
       return;
     }
     let changed = false;
+    const changedUsernames = [];
     for (const user of users) {
       const username = core.normalizeUsername(user && user.username);
       if (!username) {
@@ -526,7 +616,8 @@
       if ((followingCount === null || followersCount === null) && (!followingDisplay || !followersDisplay)) {
         continue;
       }
-      mergeUserRecord({
+      const statsUpdatedAt = Date.now();
+      const merged = mergeUserRecord({
         username,
         displayName: typeof user.displayName === "string" ? user.displayName : "",
         userId: typeof user.userId === "string" ? user.userId : "",
@@ -540,25 +631,32 @@
         followingDisplay: followingDisplay || core.formatCompactCount(followingCount),
         followersDisplay: followersDisplay || core.formatCompactCount(followersCount),
         sources: [],
-        updatedAt: Date.now()
-      });
+        statsUpdatedAt,
+        updatedAt: statsUpdatedAt
+      }, { scheduleSave: false });
+      if (!merged) {
+        continue;
+      }
       changed = true;
+      changedUsernames.push(username);
       if (source === "pageData" || source === "api") {
         state.statsFromApi += 1;
       } else if (source === "hover") {
         state.statsFromHover += 1;
       }
-      clearHoverRetry(username);
-      persistCacheNow();
-      updateVisibleCells(username);
     }
 
     if (changed) {
-      schedulePersist();
+      persistCacheNow();
+      changedUsernames.forEach(username => {
+        clearDeferredHover(username);
+        clearHoverRetry(username);
+        updateVisibleCells(username);
+      });
     }
   }
 
-  function mergeUserRecord(user) {
+  function mergeUserRecord(user, options) {
     const username = core.normalizeUsername(user && user.username);
     if (!username) {
       return null;
@@ -571,7 +669,9 @@
       return null;
     }
     state.cache.set(username, merged);
-    schedulePersist();
+    if (options?.scheduleSave !== false) {
+      schedulePersist();
+    }
     return merged;
   }
 
@@ -598,10 +698,16 @@
         return;
       }
       const profile = readProfileFromCell(cell, surface);
-      if (!profile) {
+      if (!profile || profile.username !== username) {
+        if (element.classList && element.classList.contains("xfs-stats-pill")) {
+          removePillElement(element);
+        }
         return;
       }
       renderStats(ensurePill(cell, profile, surface), stats);
+      if (state.intersectionObserver) {
+        state.intersectionObserver.unobserve(cell);
+      }
     });
   }
 
@@ -624,33 +730,134 @@
     if (!profile || !cell || document.hidden || !isSurfaceEnabled(surface)) {
       return;
     }
-    if (!shouldQueueHover(profile.username, Boolean(options?.force))) {
+    if (hasVisibleHoverCard()) {
+      scheduleDeferredHover(profile, cell, surface, "visible-card");
       return;
     }
+    if (!shouldQueueHover(profile.username, Boolean(options?.force))) {
+      if (isUserInputFocused() || Date.now() - state.lastUserActivityAt < USER_IDLE_BEFORE_HOVER_MS) {
+        scheduleDeferredHover(profile, cell, surface, "not-idle");
+      }
+      return;
+    }
+    clearDeferredHover(profile.username);
     state.hoverQueue.push({ profile, cell, surface });
+    traceHover(profile.username, "queued", { surface });
     runHoverQueue();
   }
 
   function shouldQueueHover(username, force) {
-    if (force) {
-      return true;
-    }
-    const now = Date.now();
-    pruneHoverAttempts(now);
-    const lastAttemptAt = state.hoverAttempts.get(username);
-    if (lastAttemptAt && now - lastAttemptAt < AUTO_HOVER_RETRY_MS) {
+    const shouldQueue = core.shouldRunHoverFallback({
+      alreadyAttempted: state.hoverAttempts.has(username),
+      documentHidden: document.hidden,
+      force,
+      idleForMs: Date.now() - state.lastUserActivityAt,
+      inputFocused: isUserInputFocused(),
+      requiredIdleMs: USER_IDLE_BEFORE_HOVER_MS
+    });
+    if (!shouldQueue) {
       return false;
     }
-    state.hoverAttempts.set(username, now);
+    state.hoverAttempts.add(username);
     return true;
   }
 
-  function pruneHoverAttempts(now) {
-    for (const [username, attemptedAt] of state.hoverAttempts.entries()) {
-      if (now - attemptedAt >= AUTO_HOVER_RETRY_MS) {
-        state.hoverAttempts.delete(username);
+  function cancelHiddenHover() {
+    state.userActivityVersion += 1;
+    const queuedItems = state.hoverQueue.splice(0);
+    queuedItems.forEach(item => {
+      if (item && item.profile) {
+        state.hoverAttempts.delete(item.profile.username);
+        scheduleDeferredHover(item.profile, item.cell, item.surface, "user-activity");
       }
+    });
+    if (state.activeHoverUsername) {
+      state.hoverAttempts.delete(state.activeHoverUsername);
     }
+    if (state.activeHoverWatcher) {
+      state.activeHoverWatcher.cancel("user-activity");
+      state.activeHoverWatcher = null;
+    }
+    if (state.activeHoverTarget) {
+      releaseHover(state.activeHoverTarget, state.activeHoverSilentMode);
+      state.activeHoverTarget = null;
+    }
+    state.activeHoverSilentMode = true;
+    state.activeHoverUsername = "";
+    clearSilentCardMarkers();
+    if (document.documentElement) {
+      delete document.documentElement.dataset.xfsSilentHover;
+    }
+  }
+
+  function scheduleIdleScan() {
+    clearTimeout(state.idleScanTimer);
+    state.idleScanTimer = setTimeout(() => {
+      state.idleScanTimer = 0;
+      scheduleScan(0);
+    }, USER_IDLE_BEFORE_HOVER_MS + 50);
+  }
+
+  function scheduleDeferredHover(profile, cell, surface, reason) {
+    if (!profile || state.hoverDeferTimers.has(profile.username)) {
+      return;
+    }
+    const idleRemaining = Math.max(
+      100,
+      USER_IDLE_BEFORE_HOVER_MS - (Date.now() - state.lastUserActivityAt) + 50
+    );
+    const delayMs = isUserInputFocused() || reason === "visible-card"
+      ? Math.max(idleRemaining, 500)
+      : idleRemaining;
+    traceHover(profile.username, "deferred", { reason, delayMs, surface });
+    const timer = setTimeout(() => {
+      state.hoverDeferTimers.delete(profile.username);
+      state.hoverAttempts.delete(profile.username);
+      if (
+        state.initialized
+        && document.contains(cell)
+        && !getFreshCachedStats(profile.username)
+        && isSurfaceEnabled(surface)
+      ) {
+        queueHover(profile, cell, surface, { force: false });
+      }
+    }, delayMs);
+    state.hoverDeferTimers.set(profile.username, timer);
+  }
+
+  function clearDeferredHover(username) {
+    const timer = state.hoverDeferTimers.get(username);
+    if (timer) {
+      clearTimeout(timer);
+      state.hoverDeferTimers.delete(username);
+    }
+  }
+
+  function pruneSilentCards() {
+    state.activeSilentCards.forEach(card => {
+      if (!card.isConnected) {
+        card.removeAttribute("aria-hidden");
+        delete card.dataset.xfsSilentCard;
+        state.activeSilentCards.delete(card);
+      }
+    });
+  }
+
+  function clearSilentCardMarkers() {
+    state.activeSilentCards.forEach(card => {
+      card.removeAttribute("aria-hidden");
+      delete card.dataset.xfsSilentCard;
+    });
+    state.activeSilentCards.clear();
+  }
+
+  function isUserInputFocused() {
+    const active = document.activeElement;
+    return Boolean(active && (
+      active.matches?.("input, textarea, select")
+      || active.isContentEditable
+      || active.closest?.('[contenteditable="true"]')
+    ));
   }
 
   async function runHoverQueue() {
@@ -661,12 +868,21 @@
     try {
       while (state.hoverQueue.length > 0) {
         const item = state.hoverQueue.shift();
-        if (
-          !item ||
-          !isSurfaceEnabled(item.surface) ||
-          getFreshCachedStats(item.profile.username) ||
-          !document.contains(item.cell)
-        ) {
+        if (item && hasVisibleHoverCard()) {
+          state.hoverAttempts.delete(item.profile.username);
+          scheduleDeferredHover(item.profile, item.cell, item.surface, "visible-card");
+          continue;
+        }
+        if (!item) {
+          continue;
+        }
+        if (!isSurfaceEnabled(item.surface) || getFreshCachedStats(item.profile.username) || !document.contains(item.cell)) {
+          state.hoverAttempts.delete(item.profile.username);
+          continue;
+        }
+        if (isUserInputFocused() || Date.now() - state.lastUserActivityAt < USER_IDLE_BEFORE_HOVER_MS) {
+          state.hoverAttempts.delete(item.profile.username);
+          scheduleDeferredHover(item.profile, item.cell, item.surface, "not-idle");
           continue;
         }
         await hydrateFromHover(item.profile, item.cell, item.surface);
@@ -677,75 +893,170 @@
   }
 
   async function hydrateFromHover(profile, cell, surface) {
-    let target = null;
+    if (hasVisibleHoverCard()) {
+      state.hoverAttempts.delete(profile.username);
+      return;
+    }
+    const target = profile.avatarOrNameLink || profile.nameLink;
+    const activityVersion = state.userActivityVersion;
+    const jobId = ++state.hoverJobSequence;
     const pill = findPill(cell, profile.username, surface) || ensurePill(cell, profile, surface);
     try {
       pill.dataset.xfsState = "loading";
       pill.textContent = t("pillReading");
       pill.title = t("pillHoverReadingTitle");
-      target = profile.avatarOrNameLink || profile.nameLink;
-      triggerHover(target);
-      await delay(HOVER_DELAY_MS);
-      const parsed = await waitForHoverStats(profile.username);
 
-      if (!parsed) {
-        pill.dataset.xfsState = "loading";
-        pill.textContent = t("pillWaitingData");
-        pill.title = t("pillHoverMissingTitle");
-        scheduleHoverRetry(profile, cell, surface);
+      const silentOutcome = await runHoverAttempt(profile.username, target, activityVersion, {
+        hidden: true,
+        jobId,
+        mode: "background",
+        timeoutMs: SILENT_HOVER_TIMEOUT_MS
+      });
+      if (applyHoverOutcome(profile, silentOutcome, jobId, "background")) {
+        return;
+      }
+      if (silentOutcome.cancelled || state.userActivityVersion !== activityVersion) {
+        deferInterruptedHover(profile, cell, surface, pill, jobId, silentOutcome.reason);
         return;
       }
 
-      storeUsers(
-        [
-          {
-            username: profile.username,
-            followingDisplay: parsed.followingDisplay,
-            followersDisplay: parsed.followersDisplay
-          }
-        ],
-        "hover"
-      );
+      if (hasVisibleHoverCard() || isUserInputFocused()) {
+        state.hoverAttempts.delete(profile.username);
+        scheduleDeferredHover(profile, cell, surface, "visible-card");
+        return;
+      }
+
+      traceHover(profile.username, "automatic-fallback", {
+        jobId,
+        silentElapsedMs: silentOutcome.elapsedMs
+      });
+      const fallbackOutcome = await runHoverAttempt(profile.username, target, activityVersion, {
+        hidden: false,
+        jobId,
+        mode: "fallback",
+        timeoutMs: HOVER_TIMEOUT_MS
+      });
+      if (applyHoverOutcome(profile, fallbackOutcome, jobId, "fallback")) {
+        return;
+      }
+      if (fallbackOutcome.cancelled || state.userActivityVersion !== activityVersion) {
+        deferInterruptedHover(profile, cell, surface, pill, jobId, fallbackOutcome.reason);
+        return;
+      }
+
+      traceHover(profile.username, "timeout", { jobId, elapsedMs: fallbackOutcome.elapsedMs });
+      pill.dataset.xfsState = "loading";
+      pill.textContent = t("pillWaitingData");
+      pill.title = t("pillHoverMissingTitle");
+      scheduleHoverRetry(profile, cell, surface);
     } catch {
       pill.dataset.xfsState = "loading";
       pill.textContent = t("pillWaitingData");
       pill.title = t("pillHoverInterruptedTitle");
       scheduleHoverRetry(profile, cell, surface);
-    } finally {
-      releaseHover(target);
     }
+  }
+
+  async function runHoverAttempt(username, target, activityVersion, options) {
+    const hidden = Boolean(options.hidden);
+    const root = document.documentElement;
+    let watcher = null;
+    try {
+      if (hidden) {
+        root.dataset.xfsSilentHover = "1";
+      }
+      state.activeHoverTarget = target;
+      state.activeHoverSilentMode = hidden;
+      state.activeHoverUsername = username;
+      watcher = createHoverOutcomeWatcher(username, activityVersion, options);
+      state.activeHoverWatcher = watcher;
+      traceHover(username, "triggering", {
+        jobId: options.jobId,
+        mode: options.mode,
+        activeElement: activeElementFingerprint(),
+        targetHref: target && (target.href || target.getAttribute?.("href") || "")
+      });
+      triggerHover(target, hidden);
+      return await watcher.promise;
+    } finally {
+      if (watcher) {
+        watcher.stop();
+      }
+      if (state.activeHoverWatcher === watcher) {
+        state.activeHoverWatcher = null;
+      }
+      if (state.activeHoverTarget === target) {
+        releaseHover(target, hidden);
+        state.activeHoverTarget = null;
+        state.activeHoverSilentMode = true;
+      }
+      if (state.activeHoverUsername === username) {
+        state.activeHoverUsername = "";
+      }
+      if (hidden) {
+        delete root.dataset.xfsSilentHover;
+      }
+    }
+  }
+
+  function applyHoverOutcome(profile, outcome, jobId, mode) {
+    if (outcome.source === "cache" && outcome.stats) {
+      traceHover(profile.username, "resolved-cache", { jobId, mode, elapsedMs: outcome.elapsedMs });
+      updateVisibleCells(profile.username);
+      return true;
+    }
+    if (outcome.source !== "card" || !outcome.stats) {
+      return false;
+    }
+    traceHover(profile.username, "resolved-card", { jobId, mode, elapsedMs: outcome.elapsedMs });
+    storeUsers(
+      [
+        {
+          username: profile.username,
+          followingDisplay: outcome.stats.followingDisplay,
+          followersDisplay: outcome.stats.followersDisplay
+        }
+      ],
+      "hover"
+    );
+    return true;
+  }
+
+  function deferInterruptedHover(profile, cell, surface, pill, jobId, reason) {
+    traceHover(profile.username, "cancelled", { jobId, reason: reason || "activity" });
+    pill.dataset.xfsState = "loading";
+    pill.textContent = t("pillWaitingData");
+    pill.title = t("pillHoverInterruptedTitle");
+    scheduleDeferredHover(profile, cell, surface, "interrupted");
   }
 
   function scheduleHoverRetry(profile, cell, surface) {
-    const key = `${profile.username}:${surface}`;
-    if (state.hoverRetryTimers.has(key)) {
+    if (state.hoverRetryTimers.has(profile.username)) {
       return;
     }
     const timer = setTimeout(() => {
-      state.hoverRetryTimers.delete(key);
-      if (
-        document.hidden ||
-        !document.contains(cell) ||
-        getFreshCachedStats(profile.username) ||
-        !isSurfaceEnabled(surface)
-      ) {
+      state.hoverRetryTimers.delete(profile.username);
+      if (state.activeHoverUsername === profile.username) {
+        scheduleHoverRetry(profile, cell, surface);
         return;
       }
-      queueHover(profile, cell, surface);
-    }, AUTO_HOVER_RETRY_MS);
-    state.hoverRetryTimers.set(key, timer);
+      state.hoverAttempts.delete(profile.username);
+      if (state.initialized && document.contains(cell) && !getFreshCachedStats(profile.username)) {
+        queueHover(profile, cell, surface, { force: false });
+      }
+    }, HOVER_RETRY_MS);
+    state.hoverRetryTimers.set(profile.username, timer);
   }
 
   function clearHoverRetry(username) {
-    for (const [key, timer] of state.hoverRetryTimers.entries()) {
-      if (key.startsWith(`${username}:`)) {
-        clearTimeout(timer);
-        state.hoverRetryTimers.delete(key);
-      }
+    const timer = state.hoverRetryTimers.get(username);
+    if (timer) {
+      clearTimeout(timer);
+      state.hoverRetryTimers.delete(username);
     }
   }
 
-  function triggerHover(target) {
+  function triggerHover(target, hidden) {
     if (!target) {
       return;
     }
@@ -761,12 +1072,15 @@
     target.dispatchEvent(new PointerEvent("pointerenter", { ...eventInit, bubbles: false }));
     target.dispatchEvent(new MouseEvent("mouseover", eventInit));
     target.dispatchEvent(new MouseEvent("mouseenter", { ...eventInit, bubbles: false }));
-    if (typeof target.focus === "function") {
+    if (hidden) {
+      target.dispatchEvent(new FocusEvent("focusin", { bubbles: true, cancelable: false, view: window }));
+      target.dispatchEvent(new FocusEvent("focus", { bubbles: false, cancelable: false, view: window }));
+    } else if (typeof target.focus === "function") {
       target.focus({ preventScroll: true });
     }
   }
 
-  function releaseHover(target) {
+  function releaseHover(target, hidden) {
     if (!target) {
       return;
     }
@@ -782,38 +1096,190 @@
     target.dispatchEvent(new PointerEvent("pointerleave", { ...eventInit, bubbles: false }));
     target.dispatchEvent(new MouseEvent("mouseout", eventInit));
     target.dispatchEvent(new MouseEvent("mouseleave", { ...eventInit, bubbles: false }));
-  }
-
-  async function waitForHoverStats(username) {
-    const deadline = Date.now() + HOVER_TIMEOUT_MS;
-    while (Date.now() < deadline) {
-      const parsed = readHoverCardStats(username);
-      if (parsed) {
-        return parsed;
-      }
-      await delay(120);
+    if (hidden) {
+      target.dispatchEvent(new FocusEvent("focusout", { bubbles: true, cancelable: false, view: window }));
+      target.dispatchEvent(new FocusEvent("blur", { bubbles: false, cancelable: false, view: window }));
+    } else if (document.activeElement === target && typeof target.blur === "function") {
+      target.blur();
     }
-    return null;
   }
 
-  function readHoverCardStats(username) {
-    const candidates = new Set([
-      ...document.querySelectorAll('[data-testid*="Hover"], [role="dialog"], div[style*="position"]')
-    ]);
+  function createHoverOutcomeWatcher(username, activityVersion, options) {
+    const startedAt = performance.now();
+    let settled = false;
+    let resolvePromise = null;
+    let observer = null;
+    let pollTimer = 0;
+    let timeoutTimer = 0;
+
+    const promise = new Promise(resolve => {
+      resolvePromise = resolve;
+    });
+
+    function finish(outcome) {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (observer) {
+        observer.disconnect();
+      }
+      clearInterval(pollTimer);
+      clearTimeout(timeoutTimer);
+      resolvePromise({
+        ...outcome,
+        elapsedMs: Math.round(performance.now() - startedAt)
+      });
+    }
+
+    function check() {
+      if (settled) {
+        return;
+      }
+      if (state.userActivityVersion !== activityVersion) {
+        finish({ cancelled: true, reason: "user-activity" });
+        return;
+      }
+      const cached = getFreshCachedStats(username);
+      if (cached) {
+        finish({ source: "cache", stats: cached });
+        return;
+      }
+      const parsed = readHoverCardStats(username, options);
+      if (parsed) {
+        finish({ source: "card", stats: parsed });
+      }
+    }
+
+    const root = document.body || document.documentElement;
+    if (root) {
+      observer = new MutationObserver(check);
+      observer.observe(root, {
+        attributes: true,
+        attributeFilter: ["aria-hidden", "data-testid", "style"],
+        characterData: true,
+        childList: true,
+        subtree: true
+      });
+    }
+    pollTimer = setInterval(check, 80);
+    timeoutTimer = setTimeout(() => finish({ source: "timeout" }), options.timeoutMs);
+    traceHover(username, "watcher-armed", {
+      jobId: options.jobId,
+      mode: options.mode,
+      timeoutMs: options.timeoutMs,
+      activeElement: activeElementFingerprint()
+    });
+    check();
+
+    return {
+      promise,
+      cancel(reason) {
+        finish({ cancelled: true, reason: reason || "cancelled" });
+      },
+      stop() {
+        if (!settled) {
+          finish({ cancelled: true, reason: "stopped" });
+        }
+      }
+    };
+  }
+
+  function readHoverCardStats(username, diagnosticContext) {
+    const candidates = document.querySelectorAll('[data-testid="HoverCard"]');
+    if (candidates.length > 0) {
+      traceHover(username, "card-seen", {
+        jobId: diagnosticContext?.jobId || 0,
+        candidates: candidates.length
+      });
+    }
     for (const element of candidates) {
       if (!isVisible(element)) {
+        traceHover(username, "card-rejected", { reason: "no-size" });
         continue;
+      }
+      if (!hoverCardMatchesUsername(element, username)) {
+        traceHover(username, "card-rejected", {
+          reason: "username-mismatch",
+          hrefs: Array.from(element.querySelectorAll("a[href]"))
+            .slice(0, 8)
+            .map(anchor => anchor.getAttribute("href") || "")
+        });
+        continue;
+      }
+      if (diagnosticContext?.hidden) {
+        if (element.dataset.xfsSilentCard !== "1") {
+          element.setAttribute("aria-hidden", "true");
+          element.dataset.xfsSilentCard = "1";
+        }
+        state.activeSilentCards.add(element);
+      } else if (element.dataset.xfsSilentCard === "1") {
+        element.removeAttribute("aria-hidden");
+        delete element.dataset.xfsSilentCard;
+        state.activeSilentCards.delete(element);
       }
       const text = core.normalizeText(element.innerText || element.textContent || "");
-      if (!text || !text.toLowerCase().includes(username)) {
-        continue;
-      }
       const parsed = core.parseStatsText(text);
       if (parsed) {
+        traceHover(username, "card-parsed", {
+          jobId: diagnosticContext?.jobId || 0,
+          followingDisplay: parsed.followingDisplay,
+          followersDisplay: parsed.followersDisplay
+        });
         return parsed;
       }
+      traceHover(username, "card-rejected", {
+        reason: "stats-unparsable",
+        text: text.slice(0, 500)
+      });
     }
     return null;
+  }
+
+  function traceHover(username, event, details) {
+    if (!HOVER_DIAGNOSTICS_ENABLED) {
+      return;
+    }
+    const record = {
+      at: Math.round(performance.now()),
+      event,
+      username,
+      ...(details && typeof details === "object" ? details : {})
+    };
+    state.hoverDiagnostics.push(record);
+    if (state.hoverDiagnostics.length > HOVER_DIAGNOSTICS_LIMIT) {
+      state.hoverDiagnostics.splice(0, state.hoverDiagnostics.length - HOVER_DIAGNOSTICS_LIMIT);
+    }
+    console.info("[XFS_DIAG]", JSON.stringify(record));
+  }
+
+  function activeElementFingerprint() {
+    const element = document.activeElement;
+    if (!element) {
+      return "none";
+    }
+    const tag = String(element.tagName || "unknown").toLowerCase();
+    const testId = element.getAttribute?.("data-testid") || "";
+    const role = element.getAttribute?.("role") || "";
+    return [tag, testId, role].filter(Boolean).join(":");
+  }
+
+  function hoverCardMatchesUsername(element, username) {
+    return Array.from(element.querySelectorAll("a[href]")).some(anchor => {
+      try {
+        const url = new URL(anchor.href || anchor.getAttribute("href"), location.origin);
+        const firstSegment = url.pathname.split("/").filter(Boolean)[0] || "";
+        return core.normalizeUsername(firstSegment) === username;
+      } catch {
+        return false;
+      }
+    });
+  }
+
+  function hasVisibleHoverCard() {
+    return Array.from(document.querySelectorAll('[data-testid="HoverCard"]')).some(element => (
+      element.dataset.xfsSilentCard !== "1" && isVisible(element)
+    ));
   }
 
   function readAvatarUrl(cell) {
@@ -845,14 +1311,20 @@
     };
   }
 
-  async function performProfileStatsUpdate(rawUsername) {
+  async function performProfileStatsUpdate(rawUsername, force, rawRefreshRequestedAt) {
     const username = core.normalizeUsername(rawUsername);
     if (!username) {
       return { ok: false, hasStats: false, error: "invalid_username" };
     }
+    const requestedAt = Number(rawRefreshRequestedAt);
+    const refreshStartedAt = force
+      ? requestedAt > 0
+        ? Math.min(requestedAt, Date.now())
+        : Date.now()
+      : 0;
     await waitForProfilePage(username, 8000);
     const existingStats = getFreshCachedStats(username);
-    if (existingStats) {
+    if (existingStats && !force) {
       return profileUpdateResult(username, "cached");
     }
 
@@ -871,19 +1343,21 @@
           ],
           "pageData"
         );
-        return profileUpdateResult(username, "profile_header");
+        return profileUpdateResult(username, "profile_header", force ? refreshStartedAt : 0);
       }
 
-      scanStatsSurfaces({ forceHover: true });
+      scanStatsSurfaces({ forceFallback: true });
       await gentleProfileScroll(attempts);
-      const stats = await waitForCachedStats(username, 2600);
+      const stats = await waitForCachedStats(username, 2600, {
+        minStatsUpdatedAt: force ? refreshStartedAt : 0
+      });
       if (stats) {
-        return profileUpdateResult(username, "surface_or_hover");
+        return profileUpdateResult(username, "surface_or_fallback", force ? refreshStartedAt : 0);
       }
       attempts += 1;
     }
 
-    const finalStats = getFreshCachedStats(username);
+    const finalStats = getFreshCachedStats(username, force ? refreshStartedAt : 0);
     return {
       ok: true,
       hasStats: Boolean(finalStats),
@@ -891,8 +1365,8 @@
     };
   }
 
-  function profileUpdateResult(username, source) {
-    const stats = getFreshCachedStats(username);
+  function profileUpdateResult(username, source, minStatsUpdatedAt) {
+    const stats = getFreshCachedStats(username, minStatsUpdatedAt);
     return {
       ok: true,
       hasStats: Boolean(stats),
@@ -913,10 +1387,13 @@
     return false;
   }
 
-  async function waitForCachedStats(username, timeoutMs) {
+  async function waitForCachedStats(username, timeoutMs, options) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      const stats = getFreshCachedStats(username);
+      if (options?.cancel && options.cancel()) {
+        return null;
+      }
+      const stats = getFreshCachedStats(username, options?.minStatsUpdatedAt);
       if (stats) {
         return stats;
       }
@@ -1056,7 +1533,11 @@
   function loadSettings() {
     return new Promise(resolve => {
       chrome.storage.local.get(SETTINGS_KEY, result => {
-        state.settings = core.normalizeDisplaySettings(result && result[SETTINGS_KEY]);
+        const stored = result && result[SETTINGS_KEY];
+        state.settings = core.normalizeDisplaySettings(stored);
+        if (stored && typeof stored === "object" && Object.prototype.hasOwnProperty.call(stored, "silentMode")) {
+          chrome.storage.local.set({ [SETTINGS_KEY]: state.settings });
+        }
         resolve();
       });
     });
@@ -1079,11 +1560,48 @@
   }
 
   function persistCacheNow() {
+    clearTimeout(state.pendingSaveTimer);
+    state.pendingSaveTimer = 0;
+    state.persistRequested = true;
+    if (state.persistInFlight) {
+      return state.persistInFlight;
+    }
+    state.persistInFlight = (async () => {
+      while (state.persistRequested) {
+        state.persistRequested = false;
+        await persistCacheSnapshot();
+      }
+      state.persistError = "";
+    })()
+      .catch(error => {
+        state.persistError = error && error.message ? error.message : "storage_write_failed";
+      })
+      .finally(() => {
+        state.persistInFlight = null;
+        if (state.persistRequested) {
+          persistCacheNow();
+        }
+      });
+    return state.persistInFlight;
+  }
+
+  function persistCacheSnapshot() {
     const rawCache = {};
     for (const [username, stats] of state.cache.entries()) {
       rawCache[username] = stats;
     }
-    chrome.storage.local.set({ [STORAGE_KEY]: rawCache });
+    state.pendingPersistSnapshot = core.canonicalStringify(rawCache);
+    return new Promise((resolve, reject) => {
+      chrome.storage.local.set({ [STORAGE_KEY]: rawCache }, () => {
+        const error = chrome.runtime.lastError;
+        if (error) {
+          state.pendingPersistSnapshot = "";
+          reject(new Error(error.message));
+          return;
+        }
+        resolve();
+      });
+    });
   }
 
   function getStatus() {
@@ -1092,6 +1610,8 @@
       queued: state.hoverQueue.length,
       fromApi: state.statsFromApi,
       fromHover: state.statsFromHover,
+      hoverDiagnostics: state.hoverDiagnostics.slice(-50),
+      persistError: state.persistError,
       runningSeconds: Math.round((Date.now() - state.startedAt) / 1000),
       settings: state.settings,
       visibleCells: isPageAllowed() ? findStatsSurfaces().length : 0
@@ -1122,19 +1642,81 @@
     }
     document.querySelectorAll(".xfs-stats-pill").forEach(pill => {
       if (!isSurfaceEnabled(pill.dataset.xfsSurface || "userList")) {
-        pill.remove();
+        removePillElement(pill);
       }
     });
   }
 
   function removeAllPills() {
-    document.querySelectorAll(".xfs-stats-pill").forEach(pill => pill.remove());
+    document.querySelectorAll(".xfs-stats-pill").forEach(removePillElement);
   }
 
   function removePill(cell, username, surface) {
     const pill = cell ? findPill(cell, username, surface) : null;
     if (pill) {
-      pill.remove();
+      removePillElement(pill);
+    }
+  }
+
+  function mergeExternalCache(rawCache) {
+    if (!rawCache || typeof rawCache !== "object" || Array.isArray(rawCache)) {
+      return;
+    }
+    const currentCache = {};
+    for (const [username, user] of state.cache.entries()) {
+      currentCache[username] = user;
+    }
+    const reconciled = core.reconcileUserCaches(currentCache, rawCache);
+    state.cache.clear();
+    for (const [username, user] of Object.entries(reconciled.cache)) {
+      state.cache.set(username, user);
+      updateVisibleCells(username);
+    }
+    if (reconciled.needsPersist) {
+      if (state.persistInFlight) {
+        state.persistRequested = true;
+      } else {
+        schedulePersist();
+      }
+    }
+  }
+
+  function isOwnPersistedCache(rawCache) {
+    if (!state.pendingPersistSnapshot || !rawCache || typeof rawCache !== "object") {
+      return false;
+    }
+    let serialized = "";
+    try {
+      serialized = core.canonicalStringify(rawCache);
+    } catch {
+      return false;
+    }
+    if (serialized !== state.pendingPersistSnapshot) {
+      return false;
+    }
+    state.pendingPersistSnapshot = "";
+    return true;
+  }
+
+  function removeMismatchedPills(cell, username, surface) {
+    if (!cell) {
+      return;
+    }
+    cell.querySelectorAll(`.xfs-stats-pill[data-xfs-surface="${surface}"]`).forEach(pill => {
+      if (core.normalizeUsername(pill.dataset.xfsUsername) !== username) {
+        removePillElement(pill);
+      }
+    });
+  }
+
+  function removePillElement(pill) {
+    if (!pill) {
+      return;
+    }
+    const anchor = pill.closest && pill.closest(".xfs-userlist-anchor");
+    pill.remove();
+    if (anchor && !anchor.querySelector(".xfs-stats-pill")) {
+      anchor.remove();
     }
   }
 
