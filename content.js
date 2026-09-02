@@ -11,7 +11,7 @@
   const STORAGE_KEY = "xfs:userStatsCacheV2";
   const SETTINGS_KEY = "xfs:displaySettingsV1";
   const LANGUAGE_KEY = i18n ? i18n.LANGUAGE_KEY : "xfs:languagePreferenceV1";
-  const CACHE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+  const CACHE_TTL_MS = 3 * 24 * 60 * 60 * 1000;
   const SCAN_DEBOUNCE_MS = 180;
   const API_GRACE_MS = 300;
   const SILENT_HOVER_TIMEOUT_MS = 1000;

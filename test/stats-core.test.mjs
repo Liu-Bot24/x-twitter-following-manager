@@ -180,6 +180,21 @@ const statsRefresh = core.mergeObservedUser(
 assert.equal(statsRefresh.statsUpdatedAt, Date.parse("2026-05-21T00:00:00.000Z"));
 
 const freshnessNow = Date.parse("2026-05-21T00:00:10.000Z");
+const threeDaysMs = 3 * 24 * 60 * 60 * 1000;
+assert.equal(
+  core.isCachedStatsFresh(
+    { username: "three_day_boundary", followingCount: 1, followersCount: 2, statsUpdatedAt: freshnessNow - threeDaysMs },
+    { now: freshnessNow, ttlMs: threeDaysMs }
+  ),
+  true
+);
+assert.equal(
+  core.isCachedStatsFresh(
+    { username: "older_than_three_days", followingCount: 1, followersCount: 2, statsUpdatedAt: freshnessNow - threeDaysMs - 1 },
+    { now: freshnessNow, ttlMs: threeDaysMs }
+  ),
+  false
+);
 assert.equal(
   core.isCachedStatsFresh(
     { username: "fresh", followingCount: 0, followersCount: 0, statsUpdatedAt: freshnessNow - 4000 },
@@ -712,6 +727,7 @@ assert.match(contentCss, /data-xfs-silent-card="1"/);
 assert.match(managerCss, /\.count-column,[\s\S]*?white-space:\s*nowrap/);
 assert.match(contentSource, /if \(hidden\)[\s\S]*?new FocusEvent\("focusin"[\s\S]*?else if[\s\S]*?target\.focus\s*\(/);
 assert.match(contentSource, /schedulePassiveLookup\(profile,\s*cell,\s*surface/);
+assert.match(contentSource, /const CACHE_TTL_MS = 3 \* 24 \* 60 \* 60 \* 1000/);
 assert.doesNotMatch(contentSource, /state\.settings\.silentMode/);
 assert.match(contentSource, /mode:\s*"background"[\s\S]*?mode:\s*"fallback"/);
 assert.match(contentSource, /traceHover\(profile\.username,\s*"automatic-fallback"/);
