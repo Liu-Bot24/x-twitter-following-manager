@@ -35,16 +35,18 @@
     return null;
   }
 
+  const countFormatters = new Map();
   function formatCompactCount(count) {
     const numeric = toFiniteNumber(count);
     if (numeric === null) {
       return "";
     }
     try {
-      return new Intl.NumberFormat("zh-CN", {
-        maximumFractionDigits: numeric >= 10000 ? 1 : 0,
-        notation: "compact"
-      }).format(numeric);
+      const language = "zh-CN";
+      const digits = numeric >= 10000 ? 1 : 0;
+      const key = language + ':' + digits;
+      if (!countFormatters.has(key)) countFormatters.set(key, new Intl.NumberFormat(language, { maximumFractionDigits: digits, notation: 'compact' }));
+      return countFormatters.get(key).format(numeric);
     } catch {
       return String(numeric);
     }
@@ -91,7 +93,7 @@
       if (followingCount === null || followersCount === null) {
         return;
       }
-      seenUsers.set(username, {
+      const record = {
         username,
         userId: String(candidate.rest_id || candidate.id_str || legacy.id_str || candidate.id || ""),
         displayName: typeof legacy.name === "string" ? legacy.name : "",
@@ -103,7 +105,17 @@
         followersCount,
         followingDisplay: formatCompactCount(followingCount),
         followersDisplay: formatCompactCount(followersCount)
-      });
+      };
+      if (!Object.hasOwn(legacy, 'description')) delete record.bio;
+      if (!Object.hasOwn(legacy, 'url') && !Object.hasOwn(legacy.entities || {}, 'url')) delete record.website;
+      if (!Object.hasOwn(legacy, 'verified') && !Object.hasOwn(candidate, 'is_blue_verified')) delete record.verified;
+      const previous = seenUsers.get(username);
+      if (previous) {
+        record.userId ||= previous.userId;
+        if (previous.verified === true || !Object.hasOwn(record, "verified")) record.verified = previous.verified;
+      }
+      seenUsers.set(username, record);
+      if (legacy !== candidate) seenObjects.add(legacy);
     }
 
     function visit(value, depth) {

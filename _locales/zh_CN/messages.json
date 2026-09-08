@@ -256,5 +256,29 @@
   },
   "managerSummary": {
     "message": "共 $1 个用户，当前结果 $2 个，已选 $3 个。"
+  },
+  "storageSaveFailed": {
+    "message": "未保存：$1"
+  },
+  "storageUsage": {
+    "message": "本地存储：$1 MiB / $2 MiB 工作上限"
+  },
+  "managerPageStatus": {
+    "message": "第 $1 / $2 页"
+  },
+  "managerPreviousPage": {
+    "message": "上一页"
+  },
+  "managerNextPage": {
+    "message": "下一页"
+  },
+  "csvSafe": {
+    "message": "CSV（表格软件）"
+  },
+  "csvRaw": {
+    "message": "CSV（原始数据）"
+  },
+  "managerSequentialFinished": {
+    "message": "已更新并保存 $1 / $2 个已尝试的账号。"
   }
 }

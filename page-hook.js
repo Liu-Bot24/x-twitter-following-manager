@@ -13,6 +13,7 @@
   const originalXhrSend = XMLHttpRequest.prototype.send;
   const pendingUserBatches = [];
   let contentReady = false;
+  const MAX_RESPONSE_BYTES = 12_000_000;
 
   function postHookReady() {
     window.postMessage({ source: SOURCE, type: "hook-ready" }, window.location.origin);
@@ -83,7 +84,7 @@
   }
 
   function inspectJsonText(text, sourceUrl) {
-    if (!text || text.length > 12_000_000) {
+    if (!text || text.length > MAX_RESPONSE_BYTES) {
       return;
     }
     try {
@@ -93,8 +94,32 @@
     }
   }
 
+  async function inspectResponse(response, sourceUrl) {
+    const length = Number(response.headers?.get('content-length'));
+    if (length > MAX_RESPONSE_BYTES) return;
+    const copy = response.clone();
+    const reader = copy.body?.getReader();
+    if (!reader) return;
+    const chunks = [];
+    let size = 0, timedOut = false;
+    const timeout = setTimeout(() => { timedOut = true; void reader.cancel().catch(() => {}); }, 5000);
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (timedOut) return;
+        if (done) break;
+        size += value.byteLength;
+        if (size > MAX_RESPONSE_BYTES) { void reader.cancel().catch(() => {}); return; }
+        chunks.push(value);
+      }
+      const decoder = new TextDecoder();
+      const text = chunks.map(chunk => decoder.decode(chunk, { stream: true })).join('') + decoder.decode();
+      inspectJsonText(text, sourceUrl);
+    } finally { clearTimeout(timeout); reader.releaseLock(); }
+  }
+
   window.fetch = function xFollowStatsFetch(input, init) {
-    const url = typeof input === "string" ? input : input && input.url;
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input && input.url;
     const responsePromise = originalFetch.apply(this, arguments);
     if (!shouldInspectUrl(url)) {
       return responsePromise;
@@ -106,11 +131,7 @@
         if (contentType && !contentType.toLowerCase().includes("json")) {
           return;
         }
-        response
-          .clone()
-          .json()
-          .then(payload => inspectPayload(payload, response.url || url))
-          .catch(() => {});
+        void inspectResponse(response, response.url || url).catch(() => {});
       },
       () => {}
     );
@@ -119,20 +140,24 @@
   window.fetch.toString = () => originalFetch.toString();
 
   XMLHttpRequest.prototype.open = function xFollowStatsXhrOpen(method, url) {
-    this.__xFollowStatsUrl = typeof url === "string" ? url : "";
+    this.__xFollowStatsUrl = typeof url === "string" ? url : url instanceof URL ? url.href : "";
     return originalXhrOpen.apply(this, arguments);
   };
   XMLHttpRequest.prototype.open.toString = () => originalXhrOpen.toString();
 
   XMLHttpRequest.prototype.send = function xFollowStatsXhrSend() {
-    if (shouldInspectUrl(this.__xFollowStatsUrl)) {
+    if (!this.__xFollowStatsListening) {
+      this.__xFollowStatsListening = true;
       this.addEventListener("load", () => {
+        if (!shouldInspectUrl(this.__xFollowStatsUrl)) return;
         try {
           const contentType = this.getResponseHeader && this.getResponseHeader("content-type");
           if (contentType && !contentType.toLowerCase().includes("json")) {
             return;
           }
-          if (typeof this.responseText === "string") {
+          if (this.responseType === 'json') {
+            inspectPayload(this.response, this.responseURL || this.__xFollowStatsUrl);
+          } else if ((!this.responseType || this.responseType === 'text') && typeof this.responseText === "string") {
             inspectJsonText(this.responseText, this.responseURL || this.__xFollowStatsUrl);
           }
         } catch {

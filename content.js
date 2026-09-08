@@ -7,6 +7,7 @@
 
   const core = globalThis.XFollowStatsCore;
   const i18n = globalThis.XFSI18n;
+  const storage = globalThis.XFSStorage;
   const SOURCE = core.SOURCE;
   const STORAGE_KEY = "xfs:userStatsCacheV2";
   const SETTINGS_KEY = "xfs:displaySettingsV1";
@@ -45,6 +46,10 @@
     activeHoverWatcher: null,
     activeSilentCards: new Set(),
     cache: new Map(),
+    dirtyUsers: new Map(),
+    cacheGeneration: 0,
+    activeRuns: {},
+    storageCapacityReached: false,
     cleanupCallbacks: [],
     earlyUsers: [],
     hoverAttempts: new Set(),
@@ -56,11 +61,12 @@
     hovering: false,
     initialized: false,
     intersectionObserver: null,
+    visibleCells: new WeakSet(),
+    observedCells: new Set(),
     lastUserActivityAt: 0,
     languagePreference: null,
     mutationObserver: null,
     pendingLookups: new Set(),
-    pendingPersistSnapshot: "",
     pendingSaveTimer: 0,
     persistInFlight: null,
     persistRequested: false,
@@ -113,7 +119,6 @@
     }
     if (message.type === "xfs:clearCache") {
       clearLocalCache();
-      persistCacheNow();
       sendResponse({ ok: true, status: getStatus() });
       return false;
     }
@@ -145,7 +150,7 @@
     document.querySelectorAll(".xfs-stats-pill").forEach(pill => pill.remove());
     setupObservers();
     scheduleScan(0);
-  });
+  }).catch(error => { state.persistError = error.message; });
 
   window.__xFollowStatsContentCleanup = cleanup;
 
@@ -196,23 +201,25 @@
   }
 
   function setupObservers() {
-    state.mutationObserver = new MutationObserver(() => {
+    state.mutationObserver = new MutationObserver(records => {
       pruneSilentCards();
-      scheduleScan(SCAN_DEBOUNCE_MS);
+      for (const cell of state.observedCells) if (!document.contains(cell)) unregisterCell(cell);
+      const owned = node => node.nodeType === 1 && node.matches('.xfs-stats-pill, .xfs-userlist-anchor');
+      if (records.some(record => !record.target.parentElement?.closest('.xfs-stats-pill, .xfs-userlist-anchor')
+        && !owned(record.target)
+        && (record.type !== 'childList' || [...record.addedNodes, ...record.removedNodes].some(node => !owned(node))))) {
+        scheduleScan(SCAN_DEBOUNCE_MS);
+      }
     });
     observeDocument();
 
     const storageListener = changes => {
-      if (changes[STORAGE_KEY]) {
-        const nextCache = changes[STORAGE_KEY].newValue;
-        if (isOwnPersistedCache(nextCache)) {
-          // The in-memory cache already contains this snapshot or a newer one.
-        } else if (isEmptyCacheValue(nextCache)) {
-          clearLocalCache();
-        } else {
-          mergeExternalCache(nextCache);
-        }
+      if (changes[storage.GENERATION_KEY]) {
+        state.cacheGeneration = changes[storage.GENERATION_KEY].newValue || 0;
+        clearLocalCache();
       }
+      if (changes[storage.RUNS_KEY]) state.activeRuns = changes[storage.RUNS_KEY].newValue || {};
+      if (changes[STORAGE_KEY]) mergeExternalCache(changes[STORAGE_KEY].newValue || {});
       if (changes[SETTINGS_KEY]) {
         state.settings = core.normalizeDisplaySettings(changes[SETTINGS_KEY].newValue);
         removeDisabledPills();
@@ -232,8 +239,10 @@
       entries => {
         for (const entry of entries) {
           if (!entry.isIntersecting) {
+            state.visibleCells.delete(entry.target);
             continue;
           }
+          state.visibleCells.add(entry.target);
           const cell = entry.target;
           const surface = surfaceFromElement(cell);
           if (!isSurfaceEnabled(surface)) {
@@ -244,6 +253,8 @@
             schedulePassiveLookup(profile, cell, surface);
           } else if (profile && getFreshCachedStats(profile.username)) {
             state.intersectionObserver.unobserve(cell);
+        state.visibleCells.delete(cell);
+        state.observedCells.delete(cell);
           }
         }
       },
@@ -273,7 +284,7 @@
   function observeDocument() {
     const root = document.body || document.documentElement;
     if (root && state.mutationObserver) {
-      state.mutationObserver.observe(root, { childList: true, subtree: true });
+      state.mutationObserver.observe(root, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["href"] });
       return;
     }
     setTimeout(observeDocument, 50);
@@ -285,6 +296,13 @@
   }
 
   function clearLocalCache() {
+    cancelHiddenHover();
+    state.dirtyUsers.clear();
+    state.persistError = "";
+    state.storageCapacityReached = false;
+    clearTimeout(state.pendingSaveTimer);
+    state.hoverRetryTimers.forEach(timer => clearTimeout(timer));
+    state.hoverRetryTimers.clear();
     state.cache.clear();
     state.hoverAttempts.clear();
     state.hoverDeferTimers.forEach(timer => clearTimeout(timer));
@@ -292,10 +310,6 @@
     state.hoverQueue.length = 0;
     state.pendingLookups.clear();
     removeAllPills();
-  }
-
-  function isEmptyCacheValue(value) {
-    return !value || (typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 0);
   }
 
   function scanStatsSurfaces(options) {
@@ -390,26 +404,37 @@
       renderStats(ensurePill(cell, profile, surface), cachedStats);
       if (state.intersectionObserver) {
         state.intersectionObserver.unobserve(cell);
+        state.visibleCells.delete(cell);
       }
       return;
     }
     const pill = ensurePill(cell, profile, surface);
     pill.dataset.xfsState = "loading";
-    pill.textContent = t("pillWaitingData");
+    setPillText(pill, t("pillWaitingData"));
     pill.title = t("pillLoadingFullTitle");
 
     if (state.intersectionObserver) {
       state.intersectionObserver.observe(cell);
+      state.observedCells.add(cell);
     }
-    schedulePassiveLookup(profile, cell, surface, {
-      forceFallback: Boolean(options && options.forceFallback)
-    });
+    if (!state.intersectionObserver || (options?.forceFallback && state.visibleCells.has(cell))) {
+      schedulePassiveLookup(profile, cell, surface, { forceFallback: Boolean(options?.forceFallback) });
+    }
+  }
+
+  function isLookupTargetValid(profile, cell, surface) {
+    if (!profile || !cell || document.hidden || !isSurfaceEnabled(surface) || !document.contains(cell)) return false;
+    if (state.intersectionObserver && !state.visibleCells.has(cell)) return false;
+    const rect = cell.getBoundingClientRect();
+    return rect.bottom >= -400 && rect.top <= window.innerHeight + 400
+      && readProfileFromCell(cell, surface)?.username === profile.username;
   }
 
   async function schedulePassiveLookup(profile, cell, surface, options) {
-    if (!profile || !cell || document.hidden || !isSurfaceEnabled(surface)) {
+    if (!isLookupTargetValid(profile, cell, surface)) {
       return;
     }
+    const generation = state.cacheGeneration;
     const key = `${profile.username}:${surface}`;
     if (state.pendingLookups.has(key)) {
       return;
@@ -417,10 +442,12 @@
     state.pendingLookups.add(key);
     try {
       const stats = await waitForCachedStats(profile.username, API_GRACE_MS);
+      if (generation !== state.cacheGeneration || !isLookupTargetValid(profile, cell, surface)) return;
       if (stats) {
         updateVisibleCells(profile.username);
         if (state.intersectionObserver) {
           state.intersectionObserver.unobserve(cell);
+        state.visibleCells.delete(cell);
         }
         return;
       }
@@ -488,14 +515,14 @@
     const nameBlock = cell.querySelector('[data-testid="User-Name"]');
     const nameLink = profile.nameLink || findNameLink(cell, profile.username);
     if (surface === "feed" && nameBlock) {
-      nameBlock.appendChild(pill);
+      if (pill.parentElement !== nameBlock) nameBlock.appendChild(pill);
     } else if (nameLink && nameLink.parentElement) {
       const anchor = ensureUserListPillAnchor(nameLink);
-      anchor.appendChild(pill);
+      if (pill.parentElement !== anchor) anchor.appendChild(pill);
     } else if (nameBlock) {
-      nameBlock.appendChild(pill);
+      if (pill.parentElement !== nameBlock) nameBlock.appendChild(pill);
     } else {
-      cell.appendChild(pill);
+      if (pill.parentElement !== cell) cell.appendChild(pill);
     }
   }
 
@@ -532,16 +559,20 @@
     return null;
   }
 
+  function setPillText(pill, text) {
+    if (pill.textContent !== text) pill.textContent = text;
+  }
+
   function renderStats(pill, stats) {
-    const followingDisplay = stats.followingDisplay || core.formatCompactCount(stats.followingCount);
-    const followersDisplay = stats.followersDisplay || core.formatCompactCount(stats.followersCount);
+    const locale = i18n && i18n.localeTag ? i18n.localeTag(state.languagePreference) : "en";
+    const followingDisplay = Number.isFinite(stats.followingCount) ? core.formatCompactCount(stats.followingCount, locale) : stats.followingDisplay;
+    const followersDisplay = Number.isFinite(stats.followersCount) ? core.formatCompactCount(stats.followersCount, locale) : stats.followersDisplay;
     if (!followingDisplay || !followersDisplay) {
       pill.remove();
       return;
     }
     pill.dataset.xfsState = "loaded";
-    pill.textContent = t("pillStatsText", followingDisplay, followersDisplay);
-    const locale = i18n && i18n.localeTag ? i18n.localeTag(state.languagePreference) : "en";
+    setPillText(pill, t("pillStatsText", followingDisplay, followersDisplay));
     const followingRaw = Number.isFinite(stats.followingCount) ? ` (${stats.followingCount.toLocaleString(locale)})` : "";
     const followersRaw = Number.isFinite(stats.followersCount) ? ` (${stats.followersCount.toLocaleString(locale)})` : "";
     const surfaces = core.userSurfaceSources ? core.userSurfaceSources(stats).map(sourceLabel) : [];
@@ -579,8 +610,9 @@
     const profileChanged = !existing
       || observedUser.displayName !== (existing.displayName || "")
       || (observedUser.avatarUrl && observedUser.avatarUrl !== (existing.avatarUrl || ""));
-    const shouldPersist = profileChanged || hasNewPost || Date.now() - lastSeenAt >= LAST_SEEN_PERSIST_INTERVAL_MS;
-    mergeUserRecord(observedUser, { scheduleSave: shouldPersist });
+    const sourceChanged = observedUser.sources.some(source => !(existing?.sources || []).includes(source));
+    const shouldPersist = profileChanged || hasNewPost || sourceChanged || Date.now() - lastSeenAt >= LAST_SEEN_PERSIST_INTERVAL_MS;
+    if (shouldPersist) mergeUserRecord(observedUser);
   }
 
   function getFreshCachedStats(username, minStatsUpdatedAt) {
@@ -623,15 +655,16 @@
         userId: typeof user.userId === "string" ? user.userId : "",
         profileUrl: `https://x.com/${username}`,
         avatarUrl: typeof user.avatarUrl === "string" ? user.avatarUrl : "",
-        bio: typeof user.bio === "string" ? user.bio : "",
-        website: typeof user.website === "string" ? user.website : "",
-        verified: Boolean(user.verified),
+        ...(typeof user.bio === "string" ? { bio: user.bio } : {}),
+        ...(typeof user.website === "string" ? { website: user.website } : {}),
+        ...(typeof user.verified === "boolean" ? { verified: user.verified } : {}),
         followingCount,
         followersCount,
         followingDisplay: followingDisplay || core.formatCompactCount(followingCount),
         followersDisplay: followersDisplay || core.formatCompactCount(followersCount),
         sources: [],
         statsUpdatedAt,
+        statsSource: source === "pageData" ? "network" : source,
         updatedAt: statsUpdatedAt
       }, { scheduleSave: false });
       if (!merged) {
@@ -647,7 +680,7 @@
     }
 
     if (changed) {
-      persistCacheNow();
+      schedulePersist();
       changedUsernames.forEach(username => {
         clearDeferredHover(username);
         clearHoverRetry(username);
@@ -669,6 +702,7 @@
       return null;
     }
     state.cache.set(username, merged);
+    state.dirtyUsers.set(username, merged);
     if (options?.scheduleSave !== false) {
       schedulePersist();
     }
@@ -677,7 +711,7 @@
 
   function shouldRecordUsername(username) {
     const normalizedUsername = core.normalizeUsername(username);
-    return Boolean(normalizedUsername && (!state.settings.updateOnlyExisting || state.cache.has(normalizedUsername)));
+    return Boolean(normalizedUsername && ((!state.storageCapacityReached && !state.settings.updateOnlyExisting && Object.keys(state.activeRuns).length === 0) || state.cache.has(normalizedUsername)));
   }
 
   function updateVisibleCells(username) {
@@ -685,7 +719,7 @@
     if (!stats) {
       return;
     }
-    document.querySelectorAll(`[data-xfs-username="${cssEscape(username)}"]`).forEach(element => {
+    document.querySelectorAll(`.xfs-stats-pill[data-xfs-username="${cssEscape(username)}"]`).forEach(element => {
       const cell = element.matches('[data-testid="UserCell"], [data-testid="cellInnerDiv"]')
         ? element
         : element.closest('article[data-testid="tweet"], [data-testid="UserCell"], [data-testid="cellInnerDiv"]');
@@ -694,7 +728,7 @@
       }
       const surface = element.dataset.xfsSurface || surfaceFromElement(cell);
       if (!isSurfaceEnabled(surface)) {
-        element.remove();
+        removePillElement(element);
         return;
       }
       const profile = readProfileFromCell(cell, surface);
@@ -707,6 +741,7 @@
       renderStats(ensurePill(cell, profile, surface), stats);
       if (state.intersectionObserver) {
         state.intersectionObserver.unobserve(cell);
+        state.visibleCells.delete(cell);
       }
     });
   }
@@ -727,7 +762,7 @@
   }
 
   function queueHover(profile, cell, surface, options) {
-    if (!profile || !cell || document.hidden || !isSurfaceEnabled(surface)) {
+    if (!isLookupTargetValid(profile, cell, surface)) {
       return;
     }
     if (hasVisibleHoverCard()) {
@@ -876,7 +911,7 @@
         if (!item) {
           continue;
         }
-        if (!isSurfaceEnabled(item.surface) || getFreshCachedStats(item.profile.username) || !document.contains(item.cell)) {
+        if (!isLookupTargetValid(item.profile, item.cell, item.surface) || getFreshCachedStats(item.profile.username)) {
           state.hoverAttempts.delete(item.profile.username);
           continue;
         }
@@ -893,7 +928,7 @@
   }
 
   async function hydrateFromHover(profile, cell, surface) {
-    if (hasVisibleHoverCard()) {
+    if (!isLookupTargetValid(profile, cell, surface) || hasVisibleHoverCard()) {
       state.hoverAttempts.delete(profile.username);
       return;
     }
@@ -912,6 +947,7 @@
         mode: "background",
         timeoutMs: SILENT_HOVER_TIMEOUT_MS
       });
+      if (!isLookupTargetValid(profile, cell, surface) || state.userActivityVersion !== activityVersion) return;
       if (applyHoverOutcome(profile, silentOutcome, jobId, "background")) {
         return;
       }
@@ -936,6 +972,7 @@
         mode: "fallback",
         timeoutMs: HOVER_TIMEOUT_MS
       });
+      if (!isLookupTargetValid(profile, cell, surface) || state.userActivityVersion !== activityVersion) return;
       if (applyHoverOutcome(profile, fallbackOutcome, jobId, "fallback")) {
         return;
       }
@@ -1219,7 +1256,7 @@
         state.activeSilentCards.delete(element);
       }
       const text = core.normalizeText(element.innerText || element.textContent || "");
-      const parsed = core.parseStatsText(text);
+      const parsed = readOwnedStatsLinks(element, username);
       if (parsed) {
         traceHover(username, "card-parsed", {
           jobId: diagnosticContext?.jobId || 0,
@@ -1265,15 +1302,7 @@
   }
 
   function hoverCardMatchesUsername(element, username) {
-    return Array.from(element.querySelectorAll("a[href]")).some(anchor => {
-      try {
-        const url = new URL(anchor.href || anchor.getAttribute("href"), location.origin);
-        const firstSegment = url.pathname.split("/").filter(Boolean)[0] || "";
-        return core.normalizeUsername(firstSegment) === username;
-      } catch {
-        return false;
-      }
-    });
+    return Boolean(readOwnedStatsLinks(element, username));
   }
 
   function hasVisibleHoverCard() {
@@ -1312,6 +1341,7 @@
   }
 
   async function performProfileStatsUpdate(rawUsername, force, rawRefreshRequestedAt) {
+    const generation = state.cacheGeneration;
     const username = core.normalizeUsername(rawUsername);
     if (!username) {
       return { ok: false, hasStats: false, error: "invalid_username" };
@@ -1323,6 +1353,7 @@
         : Date.now()
       : 0;
     await waitForProfilePage(username, 8000);
+    if (generation !== state.cacheGeneration) return { ok: false, hasStats: false, error: "cache_cleared" };
     const existingStats = getFreshCachedStats(username);
     if (existingStats && !force) {
       return profileUpdateResult(username, "cached");
@@ -1331,6 +1362,7 @@
     const deadline = Date.now() + 18000;
     let attempts = 0;
     while (Date.now() < deadline) {
+      if (generation !== state.cacheGeneration) return { ok: false, hasStats: false, error: "cache_cleared" };
       const parsed = readCurrentProfileStats(username);
       if (parsed) {
         storeUsers(
@@ -1341,7 +1373,7 @@
               followersDisplay: parsed.followersDisplay
             }
           ],
-          "pageData"
+          "profile"
         );
         return profileUpdateResult(username, "profile_header", force ? refreshStartedAt : 0);
       }
@@ -1358,6 +1390,7 @@
     }
 
     const finalStats = getFreshCachedStats(username, force ? refreshStartedAt : 0);
+    if (finalStats) return profileUpdateResult(username, "late_cache", force ? refreshStartedAt : 0);
     return {
       ok: true,
       hasStats: Boolean(finalStats),
@@ -1365,11 +1398,13 @@
     };
   }
 
-  function profileUpdateResult(username, source, minStatsUpdatedAt) {
+  async function profileUpdateResult(username, source, minStatsUpdatedAt) {
+    await persistCacheNow();
     const stats = getFreshCachedStats(username, minStatsUpdatedAt);
     return {
-      ok: true,
-      hasStats: Boolean(stats),
+      ok: !state.persistError,
+      error: state.persistError,
+      hasStats: Boolean(stats) && !state.persistError,
       source,
       followingDisplay: stats && (stats.followingDisplay || core.formatCompactCount(stats.followingCount)),
       followersDisplay: stats && (stats.followersDisplay || core.formatCompactCount(stats.followersCount))
@@ -1403,64 +1438,33 @@
   }
 
   function readCurrentProfileStats(username) {
-    if (core.usernameFromProfileHref(location.href, location.origin) !== username) {
-      return null;
-    }
-    for (const element of collectProfileStatsCandidates(username)) {
-      if (!element || !isVisible(element)) {
-        continue;
-      }
-      const text = core.normalizeText(element.innerText || element.textContent || "");
-      const parsed = core.parseStatsText(text);
-      if (parsed) {
-        return parsed;
-      }
-    }
-    return null;
+    if (core.usernameFromProfileHref(location.href, location.origin) !== username) return null;
+    return readOwnedStatsLinks(document.querySelector('main'), username);
   }
 
-  function collectProfileStatsCandidates(username) {
-    const candidates = [];
-    const seen = new Set();
-    const main = document.querySelector("main") || document.body;
-
-    function add(element) {
-      if (!element || seen.has(element)) {
-        return;
-      }
-      seen.add(element);
-      candidates.push(element);
-    }
-
-    if (!main) {
-      return candidates;
-    }
-
-    main.querySelectorAll("a[href]").forEach(anchor => {
-      if (!isProfileStatsLink(anchor, username)) {
-        return;
-      }
-      let current = anchor;
-      for (let depth = 0; depth < 5 && current; depth += 1) {
-        add(current);
-        current = current.parentElement;
-      }
-    });
-    add(main.querySelector('[data-testid="UserProfileHeader_Items"]'));
-    add(main.querySelector('[data-testid="UserDescription"]')?.parentElement);
-    add(main);
-    return candidates;
+  function collectProfileStatsCandidates(username, root = document.querySelector('main')) {
+    if (!root) return [];
+    return Array.from(root.querySelectorAll('a[href]')).filter(anchor =>
+      !anchor.closest('article, [data-testid="UserDescription"], [data-testid="UserCell"], [data-testid="tweetText"]')
+      && isProfileStatsLink(anchor, username) && isVisible(anchor));
   }
 
   function isProfileStatsLink(anchor, username) {
     try {
-      const url = new URL(anchor.href || anchor.getAttribute("href"), location.origin);
-      const normalizedPath = url.pathname.replace(/\/+$/, "");
-      const escapedUsername = username.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
-      return new RegExp(`^/${escapedUsername}/(following|verified_followers|followers)$`, "i").test(normalizedPath);
-    } catch {
-      return false;
-    }
+      const url = new URL(anchor.href || anchor.getAttribute('href'), location.origin);
+      const parts = url.pathname.split('/').filter(Boolean);
+      return ['x.com', 'twitter.com'].includes(url.hostname) && parts.length === 2
+        && core.normalizeUsername(parts[0]) === username
+        && ['following', 'followers', 'verified_followers'].includes(parts[1]);
+    } catch { return false; }
+  }
+
+  function readOwnedStatsLinks(root, username) {
+    const links = collectProfileStatsCandidates(username, root);
+    const following = links.find(a => new URL(a.href).pathname.replace(/\/$/, '').endsWith('/following'));
+    const followers = links.find(a => !new URL(a.href).pathname.replace(/\/$/, '').endsWith('/following'));
+    if (!following || !followers || following.parentElement !== followers.parentElement) return null;
+    return core.parseStatsText(following.textContent + ' ' + followers.textContent);
   }
 
   async function gentleProfileScroll(attempt) {
@@ -1509,13 +1513,13 @@
     return rect.width > 0 && rect.height > 0;
   }
 
-  function loadCache() {
-    return new Promise(resolve => {
-      chrome.storage.local.get(STORAGE_KEY, result => {
-        syncLocalCache(result && result[STORAGE_KEY]);
-        resolve();
-      });
-    });
+  async function loadCache() {
+    const result = await storage.request('read');
+    state.cacheGeneration = result.generation;
+    state.activeRuns = result.runs;
+    state.persistError = result.status.error || '';
+    state.storageCapacityReached = result.status.code === "storage_capacity";
+    syncLocalCache(result.cache);
   }
 
   function syncLocalCache(rawCache) {
@@ -1585,23 +1589,30 @@
     return state.persistInFlight;
   }
 
-  function persistCacheSnapshot() {
-    const rawCache = {};
-    for (const [username, stats] of state.cache.entries()) {
-      rawCache[username] = stats;
-    }
-    state.pendingPersistSnapshot = core.canonicalStringify(rawCache);
-    return new Promise((resolve, reject) => {
-      chrome.storage.local.set({ [STORAGE_KEY]: rawCache }, () => {
-        const error = chrome.runtime.lastError;
-        if (error) {
-          state.pendingPersistSnapshot = "";
-          reject(new Error(error.message));
-          return;
+  async function persistCacheSnapshot() {
+    const pending = new Map(state.dirtyUsers);
+    if (!pending.size) return;
+    const generation = state.cacheGeneration;
+    try {
+      const result = await storage.request('merge', { generation, users: [...pending.values()] });
+      if (generation !== state.cacheGeneration) return;
+      for (const [username, record] of pending) {
+        if (state.dirtyUsers.get(username) === record) {
+          state.dirtyUsers.delete(username);
+          if (result.rejectedUsernames?.includes(username)) {
+            state.cache.delete(username);
+            document.querySelectorAll('.xfs-stats-pill').forEach(pill => { if (pill.dataset.xfsUsername === username) removePillElement(pill); });
+          }
         }
-        resolve();
-      });
-    });
+      }
+    } catch (error) {
+      if (error.code === 'storage_capacity' || /QUOTA_BYTES/i.test(error.message)) state.storageCapacityReached = true;
+      if (error.code === 'stale_generation') {
+        clearLocalCache();
+        await loadCache();
+      }
+      throw error;
+    }
   }
 
   function getStatus() {
@@ -1635,11 +1646,20 @@
     return state.settings.userList;
   }
 
+  function unregisterCell(cell) {
+    state.intersectionObserver?.unobserve(cell);
+    state.visibleCells.delete(cell);
+    state.observedCells.delete(cell);
+    delete cell.dataset.xfsUsername;
+    delete cell.dataset.xfsSurface;
+  }
+
   function removeDisabledPills() {
     if (!isPageAllowed()) {
       removeAllPills();
       return;
     }
+    for (const cell of state.observedCells) if (!isSurfaceEnabled(surfaceFromElement(cell))) unregisterCell(cell);
     document.querySelectorAll(".xfs-stats-pill").forEach(pill => {
       if (!isSurfaceEnabled(pill.dataset.xfsSurface || "userList")) {
         removePillElement(pill);
@@ -1648,6 +1668,7 @@
   }
 
   function removeAllPills() {
+    for (const cell of state.observedCells) unregisterCell(cell);
     document.querySelectorAll(".xfs-stats-pill").forEach(removePillElement);
   }
 
@@ -1659,43 +1680,15 @@
   }
 
   function mergeExternalCache(rawCache) {
-    if (!rawCache || typeof rawCache !== "object" || Array.isArray(rawCache)) {
-      return;
+    if (!rawCache || typeof rawCache !== 'object' || Array.isArray(rawCache)) return;
+    const previous = state.cache;
+    state.cache = new Map(Object.entries(rawCache));
+    for (const [username, record] of state.dirtyUsers) {
+      state.cache.set(username, core.mergeCachedUserRecords(state.cache.get(username), record));
     }
-    const currentCache = {};
-    for (const [username, user] of state.cache.entries()) {
-      currentCache[username] = user;
+    for (const [username, user] of state.cache) {
+      if (core.canonicalStringify(previous.get(username)) !== core.canonicalStringify(user)) updateVisibleCells(username);
     }
-    const reconciled = core.reconcileUserCaches(currentCache, rawCache);
-    state.cache.clear();
-    for (const [username, user] of Object.entries(reconciled.cache)) {
-      state.cache.set(username, user);
-      updateVisibleCells(username);
-    }
-    if (reconciled.needsPersist) {
-      if (state.persistInFlight) {
-        state.persistRequested = true;
-      } else {
-        schedulePersist();
-      }
-    }
-  }
-
-  function isOwnPersistedCache(rawCache) {
-    if (!state.pendingPersistSnapshot || !rawCache || typeof rawCache !== "object") {
-      return false;
-    }
-    let serialized = "";
-    try {
-      serialized = core.canonicalStringify(rawCache);
-    } catch {
-      return false;
-    }
-    if (serialized !== state.pendingPersistSnapshot) {
-      return false;
-    }
-    state.pendingPersistSnapshot = "";
-    return true;
   }
 
   function removeMismatchedPills(cell, username, surface) {
@@ -1710,7 +1703,7 @@
   }
 
   function removePillElement(pill) {
-    if (!pill) {
+    if (!pill?.classList.contains("xfs-stats-pill")) {
       return;
     }
     const anchor = pill.closest && pill.closest(".xfs-userlist-anchor");

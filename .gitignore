@@ -1,3 +1,6 @@
 .DS_Store
 DEVELOPMENT_LOG.md
 .playwright-cli/
+node_modules/
+test-results/
+AGENTS.md

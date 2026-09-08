@@ -5,6 +5,14 @@
   const DEFAULT_LANGUAGE = "en";
   const MESSAGES = {
     en: {
+      managerSequentialFinished: "Updated and saved $1 of $2 attempted accounts.",
+      storageSaveFailed: "Not saved: $1",
+      storageUsage: "Local storage: $1 MiB / $2 MiB working limit",
+      managerPageStatus: "Page $1 of $2",
+      managerPreviousPage: "Previous page",
+      managerNextPage: "Next page",
+      csvSafe: "CSV (spreadsheet)",
+      csvRaw: "CSV (raw data)",
       actionTitle: "X/Twitter Following Manager",
       authorText: "Created by @liuqi",
       extensionDescription: "Instantly show follower counts on X/Twitter pages, manage following lists, and export data locally.",
@@ -92,6 +100,14 @@
       tooltipShowComments: "Show accounts captured only from reply lists. Accounts also seen in the Feed or user lists stay visible when this is off."
     },
     zh_CN: {
+      managerSequentialFinished: "已更新并保存 $1 / $2 个已尝试的账号。",
+      storageSaveFailed: "未保存：$1",
+      storageUsage: "本地存储：$1 MiB / $2 MiB 工作上限",
+      managerPageStatus: "第 $1 / $2 页",
+      managerPreviousPage: "上一页",
+      managerNextPage: "下一页",
+      csvSafe: "CSV（表格软件）",
+      csvRaw: "CSV（原始数据）",
       actionTitle: "X/Twitter 关注管理器",
       authorText: "Created by @liuqi",
       extensionDescription: "在 X/Twitter 页面直接显示粉丝数，管理关注名单，并将数据导出到本地。",

@@ -12,6 +12,7 @@
   const lockListToggle = document.getElementById("lock-list-toggle");
   const languageToggle = document.getElementById("language-toggle");
   const i18n = globalThis.XFSI18n;
+  const storage = globalThis.XFSStorage;
   const STORAGE_KEY = "xfs:userStatsCacheV2";
   const SETTINGS_KEY = "xfs:displaySettingsV1";
   const LANGUAGE_KEY = i18n ? i18n.LANGUAGE_KEY : "xfs:languagePreferenceV1";
@@ -36,19 +37,27 @@
   lockListToggle.addEventListener("change", updateSettings);
   languageToggle.addEventListener("change", updateLanguagePreference);
 
-  initLanguage().then(refreshStatus);
+  initLanguage().then(refreshStatus).catch(error => { status.textContent = t("storageSaveFailed", error.message); });
+
+  async function refreshStorageUsage() {
+    const result = await storage.request('status');
+    document.getElementById('storage-usage').textContent = t('storageUsage', (result.bytesUsed / 1048576).toFixed(2), (result.budgetBytes / 1048576).toFixed(0));
+    return result.status.error || '';
+  }
 
   async function refreshStatus() {
+    const storageError = await refreshStorageUsage();
     applySettings(await readSettings());
     const cacheSize = await readCacheSize();
     cacheCount.textContent = String(cacheSize);
     const response = await sendToActiveTab("xfs:status", {}, { quiet: true });
     if (!response || !response.ok) {
       visibleCount.textContent = "-";
-      status.textContent = await isActiveTabOnX() ? t("popupScriptNotReady") : t("popupUseOnX");
+      status.textContent = storageError ? t("storageSaveFailed", storageError) : await isActiveTabOnX() ? t("popupScriptNotReady") : t("popupUseOnX");
       return;
     }
     renderStatus(response.status);
+    if (storageError) status.textContent = t("storageSaveFailed", storageError);
   }
 
   async function updateSettings() {
@@ -64,11 +73,13 @@
   async function clearCache() {
     setBusy(true);
     try {
-      await chrome.storage.local.set({ [STORAGE_KEY]: {} });
-      await notifyActiveTab("xfs:clearCache");
+      await storage.request('clear');
+      await refreshStorageUsage();
       visibleCount.textContent = "-";
       cacheCount.textContent = "0";
       status.textContent = t("popupCacheCleared");
+    } catch (error) {
+      status.textContent = t("storageSaveFailed", error.message);
     } finally {
       setBusy(false);
     }
@@ -114,7 +125,7 @@
     if (nextStatus.settings) {
       applySettings(nextStatus.settings);
     }
-    status.textContent = t("popupCapturedStatus", nextStatus.cachedUsers || 0, nextStatus.queued || 0);
+    status.textContent = nextStatus.persistError ? t("storageSaveFailed", nextStatus.persistError) : t("popupCapturedStatus", nextStatus.cachedUsers || 0, nextStatus.queued || 0);
   }
 
   function setBusy(isBusy) {
