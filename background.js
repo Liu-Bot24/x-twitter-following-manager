@@ -5,6 +5,7 @@ importScripts("stats-core.js");
   const core = globalThis.XFollowStatsCore;
   const CACHE_KEY = "xfs:userStatsCacheV2";
   const GENERATION_KEY = "xfs:cacheGenerationV1";
+  const CLEARED_AT_KEY = "xfs:cacheClearedAtV1";
   const RUNS_KEY = "xfs:activeRunsV1";
   const STATUS_KEY = "xfs:storageStatusV1";
   const SETTINGS_KEY = "xfs:displaySettingsV1";
@@ -35,16 +36,16 @@ importScripts("stats-core.js");
     return Number.isSafeInteger(data[GENERATION_KEY]) ? data[GENERATION_KEY] : 0;
   }
   async function operate(message, sender) {
-    const data = await storageCall("get", [CACHE_KEY, GENERATION_KEY, SETTINGS_KEY, STATUS_KEY]);
+    const data = await storageCall("get", [CACHE_KEY, GENERATION_KEY, CLEARED_AT_KEY, SETTINGS_KEY, STATUS_KEY]);
     const cache = Object.assign(Object.create(null), data[CACHE_KEY] || {});
     const generation = generationOf(data);
     if (message.action === 'status') return { count: Object.keys(cache).length, status: data[STATUS_KEY] || {}, bytesUsed: await storageCall('getBytesInUse', null), budgetBytes: BUDGET_BYTES };
     if (message.action === "read") {
-      return { cache, generation, runs: Object.fromEntries(runs), status: data[STATUS_KEY] || {}, bytesUsed: await storageCall("getBytesInUse", null), budgetBytes: BUDGET_BYTES };
+      return { cache, generation, clearedAt: data[CLEARED_AT_KEY] || 0, runs: Object.fromEntries(runs), status: data[STATUS_KEY] || {}, bytesUsed: await storageCall("getBytesInUse", null), budgetBytes: BUDGET_BYTES };
     }
     if (message.action === "clear") {
       if (!extensionPage(sender)) throw new Error("Only extension pages can clear the account cache");
-      await storageCall("set", { [CACHE_KEY]: {}, [GENERATION_KEY]: generation + 1, [STATUS_KEY]: { savedAt: Date.now(), error: "" } });
+      await storageCall("set", { [CACHE_KEY]: {}, [GENERATION_KEY]: generation + 1, [CLEARED_AT_KEY]: Date.now(), [STATUS_KEY]: { savedAt: Date.now(), error: "" } });
       return { generation: generation + 1 };
     }
     if (!["merge", "import"].includes(message.action)) throw new Error("Unknown storage operation");
@@ -113,14 +114,18 @@ importScripts("stats-core.js");
           port.postMessage({ ok: true, runId });
         } catch (error) {
           runs.delete(runId);
-          port.postMessage({ ok: false, error: error.message });
+          await storageCall("set", { [RUNS_KEY]: Object.fromEntries(runs) });
+          if (ports.has(port)) {
+            try { port.postMessage({ ok: false, error: error.message }); }
+            catch { /* The owner closed while the response was being delivered. */ }
+          }
         }
       });
     });
     port.onDisconnect.addListener(() => {
       ports.delete(port);
       enqueue(async () => {
-        if (!runs.delete(runId)) return;
+        runs.delete(runId);
         await storageCall("set", { [RUNS_KEY]: Object.fromEntries(runs) });
       }).catch(() => {});
     });

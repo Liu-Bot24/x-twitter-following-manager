@@ -5,6 +5,7 @@
   const DEFAULT_LANGUAGE = "en";
   const MESSAGES = {
     en: {
+      approximateLabel: "approximate",
       managerSequentialFinished: "Updated and saved $1 of $2 attempted accounts.",
       storageSaveFailed: "Not saved: $1",
       storageUsage: "Local storage: $1 MiB / $2 MiB working limit",
@@ -100,6 +101,7 @@
       tooltipShowComments: "Show accounts captured only from reply lists. Accounts also seen in the Feed or user lists stay visible when this is off."
     },
     zh_CN: {
+      approximateLabel: "近似值",
       managerSequentialFinished: "已更新并保存 $1 / $2 个已尝试的账号。",
       storageSaveFailed: "未保存：$1",
       storageUsage: "本地存储：$1 MiB / $2 MiB 工作上限",

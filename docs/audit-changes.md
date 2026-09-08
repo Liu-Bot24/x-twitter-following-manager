@@ -2,6 +2,24 @@
 
 Baseline: `db969e7b8489ba7eceead5591ce17af943947150` (1.1.4). The previously local-only 3-day refresh adjustment from `1b0e8b6` is included, as requested, in the same review candidate.
 
+## Second candidate, after independent Pro review
+
+The first review of audit commit `0384d1323b7b72bb28015b6a9a796dcd304991cd` returned **not approved** with R1–R7. All seven findings were independently reproduced locally and addressed:
+
+| Finding | Follow-up change and behavioral verification |
+| --- | --- |
+| R1: obsolete failure and recovery read erase new data | Success, failure and read completion respect cache generations. Same-generation reads merge current observations; reads predating a second clear are ignored. Tests retain and then save Bob across delayed failures/reads, and preserve a local unsaved-data error when another writer succeeds. |
+| R2: owner closes while lock is being saved | Both failed delivery and disconnect synchronize persisted locks with the live run map. A write barrier closes the owner before readiness can be delivered. |
+| R3/R3b: absent metadata becomes a clear | Missing CSV columns stay absent. Bio, website and verification observations carry per-field timestamps through full cached records, so later nickname/post observations neither clear newer metadata nor restore old metadata after an explicit clear. Legacy synthesized empty/false values are treated as unknown. Worker-level merge/import tests cover both paths. |
+| R4: approximate counts lose displayed precision | Content and manager share `formatStatsCount`; approximate display text is preserved and the tooltip labels approximation instead of presenting an exact parenthesized count. Tested through real Chromium rendering with actual i18n code. |
+| R5: old network request acquires new save generation | Fetch and XHR retain a capture generation and start time through clone reads, buffered batches and delivery. Clearing invalidates captures and records a cutoff for startup/recovery. A live MV3 test delays the real response until after clear, verifies it is discarded, then verifies a new request is accepted. Native response data remains readable. |
+| R6: hover-success attempt flag prevents TTL refresh | Successful card/API/cache collection releases the attempt marker. A Chromium test advances the clock beyond three days and verifies automatic work starts again. |
+| R7: empty statistics compete using profile timestamps | Empty records have no statistics timestamp and cannot win over actual counts. Legacy profile timestamps are used as a statistics fallback only when complete statistics exist. Tests cover core and actual worker import paths. |
+
+Additional local findings were reproduced before repair: single-count imports lost their known count; valid sibling wrappers were rejected as a statistics block; and closing a page during the persistence debounce lost captured counts. Partial observations now retain their known side without inventing the missing side, nearby owner links can use separate wrappers without a whole-main fallback, and page-hide dispatches the newest dirty snapshot even while an earlier write callback is pending.
+
+Partial but real observations may carry an explicit statistics time for ordering; they still fail the complete-statistics freshness check. This preserves partial import data while keeping empty profile metadata out of statistical comparisons.
+
 ## Fixes and evidence
 
 | Original finding | Candidate behavior | Verification |

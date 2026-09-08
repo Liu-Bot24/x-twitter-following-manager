@@ -280,5 +280,8 @@
   },
   "managerSequentialFinished": {
     "message": "Updated and saved $1 of $2 attempted accounts."
+  },
+  "approximateLabel": {
+    "message": "approximate"
   }
 }

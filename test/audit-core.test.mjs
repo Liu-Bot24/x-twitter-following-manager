@@ -68,3 +68,48 @@ test('abbreviations are explicitly approximate through import, merge, cache and 
   const exact = core.mergeObservedUser(cached, { username: 'alice', followingCount: 26015, followersCount: 3010 });
   assert.equal(exact.followingPrecision, 'exact');
 });
+test('a partial imported observation retains the provided count without inventing its counterpart', () => {
+  const parsed = core.parseImportedUsers('profile_url,following_count\nhttps://x.com/alice,12\n', 'partial.csv')[0];
+  const merged = core.mergeObservedUser(null, parsed);
+  assert.equal(merged.followingCount, 12);
+  assert.equal(merged.followersCount, null);
+  assert.equal(core.isCachedStatsFresh(merged), false);
+  const newer = core.mergeObservedUser({ username: 'alice', followingCount: 10, followersCount: 20, statsUpdatedAt: 1 }, parsed);
+  assert.equal(newer.followingCount, 12);
+  assert.equal(newer.followersCount, null);
+});
+test('missing CSV metadata columns preserve existing fields; explicit empty columns clear them', () => {
+  const existing = { username: 'alice', bio: 'Keep biography', website: 'https://example.com' };
+  const absent = core.parseImportedUsers('profile_url\nhttps://x.com/alice\n', 'users.csv')[0];
+  const present = core.parseImportedUsers('profile_url,bio,website\nhttps://x.com/alice,,\n', 'users.csv')[0];
+  assert.equal(core.mergeObservedUser(existing, absent).bio, existing.bio);
+  assert.equal(core.mergeObservedUser(existing, absent).website, existing.website);
+  assert.equal(core.mergeObservedUser(existing, present).bio, '');
+  assert.equal(core.mergeObservedUser(existing, present).website, '');
+});
+test('newer DOM snapshots cannot erase or restore stale authoritative metadata across tabs', () => {
+  const t1 = '2026-09-01T00:00:00Z', t2 = '2026-09-02T00:00:00Z', t3 = '2026-09-03T00:00:00Z';
+  const domOnly = core.mergeObservedUser(null, { username: 'alice', displayName: 'Alice' }, t1);
+  const authority = core.mergeObservedUser(domOnly, { username: 'alice', bio: 'Known bio', website: 'https://example.com', verified: true }, t2);
+  const laterDom = core.mergeObservedUser(domOnly, { username: 'alice', observedPost: { id: '1', text: 'New post' } }, t3);
+  const merged = core.mergeCachedUserRecords(authority, laterDom);
+  assert.equal(merged.bio, authority.bio); assert.equal(merged.website, authority.website); assert.equal(merged.verified, true);
+  const oldAuthority = core.mergeObservedUser(null, { username: 'alice', bio: 'Old', website: 'https://old.example', verified: true }, t1);
+  const cleared = core.mergeObservedUser(oldAuthority, { username: 'alice', bio: '', website: '', verified: false }, t2);
+  const staleDom = core.mergeObservedUser(oldAuthority, { username: 'alice', displayName: 'Alice new name' }, t3);
+  const combined = core.mergeCachedUserRecords(cleared, staleDom);
+  assert.equal(combined.bio, ''); assert.equal(combined.website, ''); assert.equal(combined.verified, false);
+  assert.equal(core.canonicalStringify(combined), core.canonicalStringify(core.mergeCachedUserRecords(staleDom, cleared)));
+});
+test('a recent profile without statistics cannot block the first valid older statistics snapshot', () => {
+  const yesterday = Date.parse('2026-09-08T00:00:00Z');
+  let empty = core.mergeObservedUser(null, { username: 'alice' }, '2026-09-09T00:00:00Z');
+  empty = core.mergeObservedUser(empty, { username: 'alice', displayName: 'Alice' }, '2026-09-09T00:00:01Z');
+  const incoming = { username: 'alice', followingCount: 12, followersCount: 34, statsUpdatedAt: yesterday };
+  const observed = core.mergeObservedUser(empty, incoming, '2026-09-09T00:00:02Z');
+  assert.equal(observed.followingCount, 12); assert.equal(observed.followersCount, 34);
+  assert.equal(observed.statsUpdatedAt, yesterday);
+  const cached = core.mergeCachedUserRecords(empty, { ...incoming, updatedAt: yesterday });
+  assert.equal(cached.followingCount, 12); assert.equal(cached.statsUpdatedAt, yesterday);
+  assert.equal(empty.statsUpdatedAt, 0);
+});

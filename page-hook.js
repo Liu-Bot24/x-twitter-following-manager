@@ -13,6 +13,7 @@
   const originalXhrSend = XMLHttpRequest.prototype.send;
   const pendingUserBatches = [];
   let contentReady = false;
+  let captureGeneration = 0;
   const MAX_RESPONSE_BYTES = 12_000_000;
 
   function postHookReady() {
@@ -25,13 +26,17 @@
     }
     while (pendingUserBatches.length > 0) {
       const batch = pendingUserBatches.shift();
-      postUsers(batch.users, batch.sourceUrl);
+      postUsers(batch.users, batch.sourceUrl, batch.capture);
     }
   }
 
   window.addEventListener("message", event => {
     if (event.source !== window || !event.data || event.data.source !== SOURCE) {
       return;
+    }
+    if (event.data.type === 'invalidate-captures' && Number.isSafeInteger(event.data.captureGeneration)) {
+      captureGeneration = event.data.captureGeneration;
+      pendingUserBatches.length = 0;
     }
     if (event.data.type === "content-ready") {
       contentReady = true;
@@ -53,12 +58,12 @@
     return normalized.includes("user") || normalized.includes("follow");
   }
 
-  function postUsers(users, sourceUrl) {
-    if (!users || users.length === 0) {
+  function postUsers(users, sourceUrl, capture) {
+    if (capture.generation !== captureGeneration || !users || users.length === 0) {
       return;
     }
     if (!contentReady) {
-      pendingUserBatches.push({ users, sourceUrl });
+      pendingUserBatches.push({ users, sourceUrl, capture });
       if (pendingUserBatches.length > 100) {
         pendingUserBatches.shift();
       }
@@ -68,6 +73,8 @@
       {
         source: SOURCE,
         type: "users",
+        captureGeneration: capture.generation,
+        requestStartedAt: capture.startedAt,
         users,
         sourceUrl: String(sourceUrl || "")
       },
@@ -75,26 +82,28 @@
     );
   }
 
-  function inspectPayload(payload, sourceUrl) {
+  function inspectPayload(payload, sourceUrl, capture) {
+    if (capture.generation !== captureGeneration) return;
     try {
-      postUsers(core.collectUserStats(payload), sourceUrl);
+      postUsers(core.collectUserStats(payload), sourceUrl, capture);
     } catch {
       // The hook must never affect X's own runtime.
     }
   }
 
-  function inspectJsonText(text, sourceUrl) {
+  function inspectJsonText(text, sourceUrl, capture) {
     if (!text || text.length > MAX_RESPONSE_BYTES) {
       return;
     }
     try {
-      inspectPayload(JSON.parse(text), sourceUrl);
+      inspectPayload(JSON.parse(text), sourceUrl, capture);
     } catch {
       // Ignore non-JSON or truncated responses.
     }
   }
 
-  async function inspectResponse(response, sourceUrl) {
+  async function inspectResponse(response, sourceUrl, capture) {
+    if (capture.generation !== captureGeneration) return;
     const length = Number(response.headers?.get('content-length'));
     if (length > MAX_RESPONSE_BYTES) return;
     const copy = response.clone();
@@ -114,12 +123,13 @@
       }
       const decoder = new TextDecoder();
       const text = chunks.map(chunk => decoder.decode(chunk, { stream: true })).join('') + decoder.decode();
-      inspectJsonText(text, sourceUrl);
+      inspectJsonText(text, sourceUrl, capture);
     } finally { clearTimeout(timeout); reader.releaseLock(); }
   }
 
   window.fetch = function xFollowStatsFetch(input, init) {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input && input.url;
+    const capture = { generation: captureGeneration, startedAt: Date.now() };
     const responsePromise = originalFetch.apply(this, arguments);
     if (!shouldInspectUrl(url)) {
       return responsePromise;
@@ -131,7 +141,7 @@
         if (contentType && !contentType.toLowerCase().includes("json")) {
           return;
         }
-        void inspectResponse(response, response.url || url).catch(() => {});
+        void inspectResponse(response, response.url || url, capture).catch(() => {});
       },
       () => {}
     );
@@ -146,6 +156,7 @@
   XMLHttpRequest.prototype.open.toString = () => originalXhrOpen.toString();
 
   XMLHttpRequest.prototype.send = function xFollowStatsXhrSend() {
+    this.__xFollowStatsCapture = { generation: captureGeneration, startedAt: Date.now() };
     if (!this.__xFollowStatsListening) {
       this.__xFollowStatsListening = true;
       this.addEventListener("load", () => {
@@ -156,9 +167,9 @@
             return;
           }
           if (this.responseType === 'json') {
-            inspectPayload(this.response, this.responseURL || this.__xFollowStatsUrl);
+            inspectPayload(this.response, this.responseURL || this.__xFollowStatsUrl, this.__xFollowStatsCapture);
           } else if ((!this.responseType || this.responseType === 'text') && typeof this.responseText === "string") {
-            inspectJsonText(this.responseText, this.responseURL || this.__xFollowStatsUrl);
+            inspectJsonText(this.responseText, this.responseURL || this.__xFollowStatsUrl, this.__xFollowStatsCapture);
           }
         } catch {
           // Some responseType values make responseText inaccessible.

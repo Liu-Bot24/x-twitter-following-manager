@@ -4,7 +4,9 @@
   "private": true,
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "test:core": "node --test test/stats-core.test.mjs test/page-hook.test.mjs test/audit-core.test.mjs test/audit-network.test.mjs test/audit-storage.test.mjs"
+    "test:core": "node --test test/stats-core.test.mjs test/page-hook.test.mjs test/audit-core.test.mjs test/audit-network.test.mjs test/audit-storage.test.mjs test/audit-content-state.test.mjs"
   },
-  "devDependencies": { "playwright": "1.62.1" }
+  "devDependencies": {
+    "playwright": "1.62.1"
+  }
 }

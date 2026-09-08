@@ -10,7 +10,7 @@ function hook(response) {
     constructor() { this.listeners = []; }
     addEventListener(type, callback) { this.listeners.push(callback); }
     open() {}
-    send() { this.listeners.forEach(callback => callback()); }
+    send() { if (!this.defer) this.listeners.forEach(callback => callback()); }
     getResponseHeader() { return 'application/json'; }
   }
   const context = vm.createContext({
@@ -24,7 +24,10 @@ function hook(response) {
   sources.forEach(source => vm.runInContext(source, context));
   vm.runInContext('globalThis.readyEvent = { source: window, data: { source: "x-follow-stats-extension", type: "content-ready" } }', context);
   listeners.get('message')(context.readyEvent);
-  return { context, messages, original: () => originalPromise };
+  return { context, messages, original: () => originalPromise, invalidate() {
+    vm.runInContext('globalThis.invalidateEvent = { source: window, data: { source: "x-follow-stats-extension", type: "invalidate-captures", captureGeneration: 1 } }', context);
+    listeners.get('message')(context.invalidateEvent);
+  } };
 }
 const wait = () => new Promise(resolve => setTimeout(resolve, 25));
 test('Fetch string, Request and URL retain native response identity and collect counts', async () => {
@@ -56,4 +59,22 @@ test('JSON XHR avoids responseText getter and reused XHR has one listener', () =
   assert.equal(xhr.listeners.length, 1);
   xhr.open('GET', 'https://x.com/not-api'); xhr.send();
   assert.equal(h.messages.filter(m => m.type === 'users').length, 2);
+});
+test('clear invalidates XHR and a Fetch body already being read, while native data remains readable', async () => {
+  let controller;
+  const stream = new ReadableStream({ start(value) { controller = value; } });
+  const response = new Response(stream, { headers: { 'content-type': 'application/json' } });
+  const h = hook(response);
+  const xhr = new h.context.XMLHttpRequest();
+  xhr.defer = true; xhr.responseType = 'json'; xhr.response = payload;
+  xhr.open('GET', 'https://x.com/i/api/graphql/Old'); xhr.send();
+  await h.context.fetch('https://x.com/i/api/graphql/Old');
+  h.invalidate();
+  xhr.listeners.forEach(callback => callback());
+  controller.enqueue(new TextEncoder().encode(JSON.stringify(payload))); controller.close();
+  await wait();
+  assert.equal(h.messages.filter(m => m.type === 'users').length, 0);
+  assert.deepEqual(await response.json(), payload);
+  xhr.defer = false; xhr.send();
+  assert.equal(h.messages.filter(m => m.type === 'users').length, 1);
 });

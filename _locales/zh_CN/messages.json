@@ -280,5 +280,8 @@
   },
   "managerSequentialFinished": {
     "message": "已更新并保存 $1 / $2 个已尝试的账号。"
+  },
+  "approximateLabel": {
+    "message": "近似值"
   }
 }

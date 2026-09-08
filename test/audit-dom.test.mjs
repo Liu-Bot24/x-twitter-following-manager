@@ -6,6 +6,7 @@ const browser = await chromium.launch(browserOptions);
 after(() => browser.close());
 const source = await readFile(new URL('../content.js', import.meta.url), 'utf8');
 const storageSource = await readFile(new URL('../storage-client.js', import.meta.url), 'utf8');
+const i18nSource = await readFile(new URL('../i18n.js', import.meta.url), 'utf8');
 const coreSource = await readFile(new URL('../stats-core.js', import.meta.url), 'utf8');
 async function fixture(html) {
   const page = await browser.newPage();
@@ -14,12 +15,13 @@ async function fixture(html) {
   await page.evaluate(() => {
     const event = { addListener() {}, removeListener() {} };
     window.chrome = { runtime: { onMessage: event, sendMessage(message, callback) { callback({ ok: true, cache: {}, generation: 0, runs: {}, status: {} }); } }, storage: { onChanged: event, local: {
-      get(key, callback) { callback({}); }, set(data, callback) { callback?.(); }
+      get(key, callback) { callback({ 'xfs:languagePreferenceV1': 'en' }); }, set(data, callback) { callback?.(); }
     } } };
   });
   await page.addScriptTag({ content: coreSource });
   await page.addScriptTag({ content: storageSource });
-  await page.addScriptTag({ content: source.replace(/\}\)\(\);\s*$/, 'window.audit = { state, processCell, updateVisibleCells, readCurrentProfileStats, hoverCardMatchesUsername, setupObservers, scanStatsSurfaces }; })();') });
+  await page.addScriptTag({ content: i18nSource });
+  await page.addScriptTag({ content: source.replace(/\}\)\(\);\s*$/, 'window.audit = { state, processCell, updateVisibleCells, readCurrentProfileStats, hoverCardMatchesUsername, setupObservers, scanStatsSurfaces, shouldQueueHover, applyHoverOutcome, getFreshCachedStats }; })();') });
   await page.waitForTimeout(50);
   return page;
 }
@@ -88,4 +90,39 @@ test('hover owner is not inferred from a mentioned profile in the biography', as
     return [audit.hoverCardMatchesUsername(card, 'alice'), audit.hoverCardMatchesUsername(card, 'bob')];
   });
   assert.deepEqual(result, [false, true]); await page.close();
+});
+test('owner statistics can have separate wrappers within the same compact statistics block', async () => {
+  const page = await fixture('<main><div><div><a href="/alice/following">56 Following</a></div><div><a href="/alice/verified_followers">78 Followers</a></div></div></main>');
+  const stats = await page.evaluate(() => audit.readCurrentProfileStats('alice'));
+  assert.equal(stats?.followingDisplay, '56'); assert.equal(stats?.followersDisplay, '78');
+  await page.close();
+});
+test('approximate statistics preserve their displayed precision and do not get exact-value tooltips', async () => {
+  const page = await fixture(native);
+  const result = await page.evaluate(() => {
+    const core = XFollowStatsCore;
+    const parsed = core.parseImportedUsers('profile_url,following_count,followers_count\nhttps://x.com/alice,1.2K,3.4K\n', 'users.csv')[0];
+    audit.state.cache.set('alice', core.mergeObservedUser(null, parsed));
+    audit.processCell(document.querySelector('article'), {}, 'feed');
+    const pill = document.querySelector('.xfs-stats-pill');
+    return { text: pill.textContent, title: pill.title };
+  });
+  assert.match(result.text, /1\.2K/); assert.match(result.text, /3\.4K/);
+  assert.doesNotMatch(result.title, /\(1,200\)|\(3,400\)/);
+  assert.match(result.title, /approximate/);
+  await page.close();
+});
+test('successful hover permits automatic collection again after the three-day TTL expires', async () => {
+  const page = await fixture(native);
+  await page.evaluate(() => {
+    audit.shouldQueueHover('alice', false);
+    audit.applyHoverOutcome({ username: 'alice' }, { source: 'card', stats: { followingDisplay: '12', followersDisplay: '34' } }, 1, 'background');
+    const future = audit.state.cache.get('alice').statsUpdatedAt + 3 * 24 * 60 * 60 * 1000 + 1;
+    const originalNow = Date.now, offset = future - originalNow();
+    Date.now = () => originalNow() + offset;
+    audit.scanStatsSurfaces({});
+  });
+  assert.equal(await page.evaluate(() => audit.getFreshCachedStats('alice')), null);
+  await page.waitForFunction(() => audit.state.hoverJobSequence > 0, null, { timeout: 2000 });
+  await page.close();
 });

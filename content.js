@@ -48,8 +48,11 @@
     cache: new Map(),
     dirtyUsers: new Map(),
     cacheGeneration: 0,
+    captureGeneration: 0,
+    clearedAt: 0,
     activeRuns: {},
     storageCapacityReached: false,
+    storageRevision: 0,
     cleanupCallbacks: [],
     earlyUsers: [],
     hoverAttempts: new Set(),
@@ -86,6 +89,15 @@
 
   chrome.runtime.onMessage.addListener(onRuntimeMessage);
   state.cleanupCallbacks.push(() => chrome.runtime.onMessage.removeListener(onRuntimeMessage));
+  const flushOnPageHide = () => {
+    // Dispatch immediately even if an earlier write is awaiting its callback.
+    // The background queue merges duplicate records and preserves clear ordering.
+    if (state.initialized && state.dirtyUsers.size) {
+      void persistCacheSnapshot().catch(recordPersistError);
+    }
+  };
+  addEventListener("pagehide", flushOnPageHide);
+  state.cleanupCallbacks.push(() => removeEventListener("pagehide", flushOnPageHide));
 
   function onRuntimeMessage(message, sender, sendResponse) {
     if (!message || typeof message !== "object") {
@@ -141,16 +153,17 @@
     return false;
   }
 
+  setupStorageListener();
   Promise.all([loadCache(), loadSettings(), loadLanguagePreference()]).then(() => {
     state.initialized = true;
     if (state.earlyUsers.length > 0) {
-      const earlyUsers = state.earlyUsers.splice(0);
-      storeUsers(earlyUsers, "pageData");
+      const earlyBatches = state.earlyUsers.splice(0);
+      for (const batch of earlyBatches) if (isCurrentCapture(batch)) storeUsers(batch.users, "pageData");
     }
     document.querySelectorAll(".xfs-stats-pill").forEach(pill => pill.remove());
     setupObservers();
     scheduleScan(0);
-  }).catch(error => { state.persistError = error.message; });
+  }).catch(recordPersistError);
 
   window.__xFollowStatsContentCleanup = cleanup;
 
@@ -185,35 +198,38 @@
       return;
     }
     if (event.data.type === "users") {
-      if (!isPageAllowed()) {
+      if (!isPageAllowed() || !isCurrentCapture(event.data)) {
         return;
       }
       if (!state.initialized) {
-        state.earlyUsers.push(...(Array.isArray(event.data.users) ? event.data.users : []));
+        state.earlyUsers.push(event.data);
         return;
       }
       storeUsers(event.data.users, "pageData");
     }
   }
 
+  function isCurrentCapture(batch) {
+    return batch.captureGeneration === state.captureGeneration
+      && (!state.clearedAt || Number(batch.requestStartedAt) > state.clearedAt);
+  }
+
   function notifyContentReady() {
     window.postMessage({ source: SOURCE, type: "content-ready" }, window.location.origin);
   }
 
-  function setupObservers() {
-    state.mutationObserver = new MutationObserver(records => {
-      pruneSilentCards();
-      for (const cell of state.observedCells) if (!document.contains(cell)) unregisterCell(cell);
-      const owned = node => node.nodeType === 1 && node.matches('.xfs-stats-pill, .xfs-userlist-anchor');
-      if (records.some(record => !record.target.parentElement?.closest('.xfs-stats-pill, .xfs-userlist-anchor')
-        && !owned(record.target)
-        && (record.type !== 'childList' || [...record.addedNodes, ...record.removedNodes].some(node => !owned(node))))) {
-        scheduleScan(SCAN_DEBOUNCE_MS);
+  function setupStorageListener() {
+    const storageListener = (changes, area) => {
+      if (area && area !== "local") return;
+      state.storageRevision++;
+      if (changes[storage.STATUS_KEY]) {
+        const status = changes[storage.STATUS_KEY].newValue || {};
+        if (status.error) state.persistError ||= status.error;
+        else if (!state.dirtyUsers.size) state.persistError = '';
+        if (status.code === 'storage_capacity') state.storageCapacityReached = true;
+        else if (!state.dirtyUsers.size) state.storageCapacityReached = false;
       }
-    });
-    observeDocument();
-
-    const storageListener = changes => {
+      if (changes[storage.CLEARED_AT_KEY]) state.clearedAt = changes[storage.CLEARED_AT_KEY].newValue || 0;
       if (changes[storage.GENERATION_KEY]) {
         state.cacheGeneration = changes[storage.GENERATION_KEY].newValue || 0;
         clearLocalCache();
@@ -234,6 +250,21 @@
     };
     chrome.storage.onChanged.addListener(storageListener);
     state.cleanupCallbacks.push(() => chrome.storage.onChanged.removeListener(storageListener));
+
+  }
+
+  function setupObservers() {
+    state.mutationObserver = new MutationObserver(records => {
+      pruneSilentCards();
+      for (const cell of state.observedCells) if (!document.contains(cell)) unregisterCell(cell);
+      const owned = node => node.nodeType === 1 && node.matches('.xfs-stats-pill, .xfs-userlist-anchor');
+      if (records.some(record => !record.target.parentElement?.closest('.xfs-stats-pill, .xfs-userlist-anchor')
+        && !owned(record.target)
+        && (record.type !== 'childList' || [...record.addedNodes, ...record.removedNodes].some(node => !owned(node))))) {
+        scheduleScan(SCAN_DEBOUNCE_MS);
+      }
+    });
+    observeDocument();
 
     state.intersectionObserver = new IntersectionObserver(
       entries => {
@@ -296,6 +327,9 @@
   }
 
   function clearLocalCache() {
+    state.captureGeneration++;
+    state.earlyUsers.length = 0;
+    window.postMessage({ source: SOURCE, type: 'invalidate-captures', captureGeneration: state.captureGeneration }, location.origin);
     cancelHiddenHover();
     state.dirtyUsers.clear();
     state.persistError = "";
@@ -313,6 +347,7 @@
   }
 
   function scanStatsSurfaces(options) {
+    if (!state.initialized) return;
     if (!isPageAllowed()) {
       removeAllPills();
       return;
@@ -565,16 +600,16 @@
 
   function renderStats(pill, stats) {
     const locale = i18n && i18n.localeTag ? i18n.localeTag(state.languagePreference) : "en";
-    const followingDisplay = Number.isFinite(stats.followingCount) ? core.formatCompactCount(stats.followingCount, locale) : stats.followingDisplay;
-    const followersDisplay = Number.isFinite(stats.followersCount) ? core.formatCompactCount(stats.followersCount, locale) : stats.followersDisplay;
+    const followingDisplay = core.formatStatsCount(stats, 'following', locale);
+    const followersDisplay = core.formatStatsCount(stats, 'followers', locale);
     if (!followingDisplay || !followersDisplay) {
       pill.remove();
       return;
     }
     pill.dataset.xfsState = "loaded";
     setPillText(pill, t("pillStatsText", followingDisplay, followersDisplay));
-    const followingRaw = Number.isFinite(stats.followingCount) ? ` (${stats.followingCount.toLocaleString(locale)})` : "";
-    const followersRaw = Number.isFinite(stats.followersCount) ? ` (${stats.followersCount.toLocaleString(locale)})` : "";
+    const followingRaw = stats.followingPrecision === "approximate" ? ` (${t("approximateLabel")})` : Number.isFinite(stats.followingCount) ? ` (${stats.followingCount.toLocaleString(locale)})` : "";
+    const followersRaw = stats.followersPrecision === "approximate" ? ` (${t("approximateLabel")})` : Number.isFinite(stats.followersCount) ? ` (${stats.followersCount.toLocaleString(locale)})` : "";
     const surfaces = core.userSurfaceSources ? core.userSurfaceSources(stats).map(sourceLabel) : [];
     const sourceText = surfaces.length > 0 ? `\n${t("sourcePrefix")}${surfaces.join(t("listSeparator"))}` : "";
     pill.title = `${t("followingLabel")}: ${followingDisplay}${followingRaw}\n${t("followersLabel")}: ${followersDisplay}${followersRaw}${sourceText}`;
@@ -682,6 +717,7 @@
     if (changed) {
       schedulePersist();
       changedUsernames.forEach(username => {
+        state.hoverAttempts.delete(username);
         clearDeferredHover(username);
         clearHoverRetry(username);
         updateVisibleCells(username);
@@ -1038,6 +1074,7 @@
 
   function applyHoverOutcome(profile, outcome, jobId, mode) {
     if (outcome.source === "cache" && outcome.stats) {
+      state.hoverAttempts.delete(profile.username);
       traceHover(profile.username, "resolved-cache", { jobId, mode, elapsedMs: outcome.elapsedMs });
       updateVisibleCells(profile.username);
       return true;
@@ -1461,10 +1498,24 @@
 
   function readOwnedStatsLinks(root, username) {
     const links = collectProfileStatsCandidates(username, root);
-    const following = links.find(a => new URL(a.href).pathname.replace(/\/$/, '').endsWith('/following'));
-    const followers = links.find(a => !new URL(a.href).pathname.replace(/\/$/, '').endsWith('/following'));
-    if (!following || !followers || following.parentElement !== followers.parentElement) return null;
-    return core.parseStatsText(following.textContent + ' ' + followers.textContent);
+    const followingLinks = links.filter(a => new URL(a.href).pathname.replace(/\/$/, '').endsWith('/following'));
+    const followersLinks = links.filter(a => !new URL(a.href).pathname.replace(/\/$/, '').endsWith('/following'));
+    for (const following of followingLinks) {
+      for (const followers of followersLinks) {
+        let parent = following.parentElement;
+        for (let depth = 0; depth < 3 && parent; depth++, parent = parent.parentElement) {
+          // A compact owner-statistics block may wrap each link separately.
+          // Never combine links merely because both appear somewhere in main.
+          if (parent === root && !root.matches('[data-testid="HoverCard"]')) break;
+          if (parent.contains(followers)) {
+            const parsed = core.parseStatsText(following.textContent + ' ' + followers.textContent);
+            if (parsed) return parsed;
+          }
+          if (parent === root) break;
+        }
+      }
+    }
+    return null;
   }
 
   async function gentleProfileScroll(attempt) {
@@ -1514,24 +1565,26 @@
   }
 
   async function loadCache() {
-    const result = await storage.request('read');
-    state.cacheGeneration = result.generation;
-    state.activeRuns = result.runs;
-    state.persistError = result.status.error || '';
-    state.storageCapacityReached = result.status.code === "storage_capacity";
-    syncLocalCache(result.cache);
-  }
-
-  function syncLocalCache(rawCache) {
-    if (!rawCache || typeof rawCache !== "object" || Array.isArray(rawCache)) {
-      return;
+    const requestedGeneration = state.cacheGeneration;
+    const requestedRevision = state.storageRevision;
+    let result;
+    try { result = await storage.request('read'); }
+    catch (error) { error.cacheGeneration = requestedGeneration; throw error; }
+    if (result.generation < state.cacheGeneration) return;
+    if (result.generation > state.cacheGeneration) {
+      state.cacheGeneration = result.generation;
+      clearLocalCache();
     }
-    state.cache.clear();
-    for (const [username, stats] of Object.entries(rawCache)) {
-      if (core.normalizeUsername(username) && stats && typeof stats === "object") {
-        state.cache.set(username, stats);
-      }
+    state.clearedAt = Math.max(state.clearedAt, result.clearedAt || 0);
+    if (requestedRevision === state.storageRevision) {
+      state.activeRuns = result.runs;
+      state.persistError = result.status.error || '';
+      state.storageCapacityReached = result.status.code === 'storage_capacity';
     }
+    // A read may have started before a new observation or another storage event.
+    // Clears advance the generation; within one generation records only merge.
+    const reconciled = core.reconcileUserCaches(Object.fromEntries(state.cache), result.cache);
+    mergeExternalCache(reconciled.cache);
   }
 
   function loadSettings() {
@@ -1575,11 +1628,8 @@
         state.persistRequested = false;
         await persistCacheSnapshot();
       }
-      state.persistError = "";
     })()
-      .catch(error => {
-        state.persistError = error && error.message ? error.message : "storage_write_failed";
-      })
+      .catch(recordPersistError)
       .finally(() => {
         state.persistInFlight = null;
         if (state.persistRequested) {
@@ -1589,6 +1639,11 @@
     return state.persistInFlight;
   }
 
+  function recordPersistError(error) {
+    if (error.cacheGeneration !== undefined && error.cacheGeneration !== state.cacheGeneration) return;
+    state.persistError = error && error.message ? error.message : 'storage_write_failed';
+  }
+
   async function persistCacheSnapshot() {
     const pending = new Map(state.dirtyUsers);
     if (!pending.size) return;
@@ -1596,6 +1651,7 @@
     try {
       const result = await storage.request('merge', { generation, users: [...pending.values()] });
       if (generation !== state.cacheGeneration) return;
+      state.persistError = "";
       for (const [username, record] of pending) {
         if (state.dirtyUsers.get(username) === record) {
           state.dirtyUsers.delete(username);
@@ -1606,11 +1662,10 @@
         }
       }
     } catch (error) {
+      if (generation !== state.cacheGeneration) return;
       if (error.code === 'storage_capacity' || /QUOTA_BYTES/i.test(error.message)) state.storageCapacityReached = true;
-      if (error.code === 'stale_generation') {
-        clearLocalCache();
-        await loadCache();
-      }
+      if (error.code === 'stale_generation') await loadCache();
+      error.cacheGeneration = generation;
       throw error;
     }
   }

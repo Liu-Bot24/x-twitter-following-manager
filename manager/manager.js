@@ -120,6 +120,7 @@
     updateSelectionControls();
   });
   chrome.storage.onChanged.addListener(changes => {
+    if (changes[storage.GENERATION_KEY] && sequentialUpdate.running) sequentialUpdate.cancelRequested = true;
     if (changes[STORAGE_KEY] || changes[storage.STATUS_KEY]) {
       loadUsers();
     }
@@ -237,13 +238,11 @@
   }
 
   function displayFollowing(user) {
-    return Number.isFinite(user.followingCount) && user.followingPrecision !== 'approximate'
-      ? core.formatCompactCount(user.followingCount, i18n.localeTag(languagePreference)) : user.followingDisplay;
+    return core.formatStatsCount(user, 'following', i18n.localeTag(languagePreference));
   }
 
   function displayFollowers(user) {
-    return Number.isFinite(user.followersCount) && user.followersPrecision !== 'approximate'
-      ? core.formatCompactCount(user.followersCount, i18n.localeTag(languagePreference)) : user.followersDisplay;
+    return core.formatStatsCount(user, 'followers', i18n.localeTag(languagePreference));
   }
 
   function renderCheckbox(user) {

@@ -2,6 +2,7 @@
   "use strict";
 
   const SOURCE = "x-follow-stats-extension";
+  const PROFILE_METADATA_FIELDS = ["bio", "website", "verified"];
   const MAX_GRAPH_DEPTH = 18;
   const MAX_GRAPH_NODES = 12000;
   const USERNAME_RE = /^[A-Za-z0-9_]{1,15}$/;
@@ -201,6 +202,13 @@
     }
   }
 
+  function formatStatsCount(user, field, locale) {
+    const display = preferString(user && user[field + 'Display'], '');
+    const count = firstFiniteNumber(user && user[field + 'Count']);
+    if (user && user[field + 'Precision'] === 'approximate') return display || formatCompactCount(count, locale);
+    return count !== null ? formatCompactCount(count, locale) : display;
+  }
+
   function profileUrlForUsername(username) {
     const normalizedUsername = normalizeUsername(username);
     return normalizedUsername ? `https://x.com/${normalizedUsername}` : "";
@@ -343,6 +351,36 @@
     return JSON.stringify(normalize(value));
   }
 
+  function metadataTimestamp(record, field) {
+    const valid = Object.hasOwn(record, field) && (field === "verified"
+      ? typeof record[field] === "boolean" : typeof record[field] === "string");
+    if (!valid) return 0;
+    if (Object.hasOwn(record, "metadataUpdatedAt")) {
+      const timestamp = Number(record.metadataUpdatedAt?.[field]);
+      return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : 0;
+    }
+    // Legacy empty/false values may have been synthesized by a DOM-only record.
+    // Retain meaningful legacy values; only new observations can assert a clear.
+    return record[field] ? cacheRecordTimestamp(record) || 1 : 0;
+  }
+
+  function mergeProfileMetadata(existing, next, observedAt) {
+    const result = { metadataUpdatedAt: {} };
+    const isObservation = observedAt !== undefined && !Object.hasOwn(next, "metadataUpdatedAt");
+    for (const field of PROFILE_METADATA_FIELDS) {
+      const supplied = Object.hasOwn(next, field) && (field === "verified"
+        ? typeof next[field] === "boolean" : typeof next[field] === "string");
+      const previousTime = metadataTimestamp(existing, field);
+      const nextTime = isObservation && supplied ? observedAt : metadataTimestamp(next, field);
+      if (!previousTime && !nextTime) continue;
+      const nextWins = nextTime > previousTime || (nextTime === previousTime
+        && (isObservation || canonicalStringify(next[field]) > canonicalStringify(existing[field])));
+      result[field] = nextWins ? next[field] : existing[field];
+      result.metadataUpdatedAt[field] = Math.max(previousTime, nextTime);
+    }
+    return result;
+  }
+
   function mergeObservedUser(current, incoming, now) {
     const normalizedUsername = normalizeUsername(
       incoming && incoming.username ? incoming.username : current && current.username
@@ -354,20 +392,14 @@
     const existing = current && typeof current === "object" ? current : {};
     const next = incoming && typeof incoming === "object" ? incoming : {};
     const incomingHasStats = (
-      (Number.isFinite(next.followingCount) && Number.isFinite(next.followersCount))
-      || (Boolean(preferString(next.followingDisplay, "")) && Boolean(preferString(next.followersDisplay, "")))
+      Number.isFinite(next.followingCount) || Number.isFinite(next.followersCount)
+      || Boolean(preferString(next.followingDisplay, "")) || Boolean(preferString(next.followersDisplay, ""))
     );
-    const existingHasStats = (
-      (Number.isFinite(existing.followingCount) && Number.isFinite(existing.followersCount))
-      || (Boolean(preferString(existing.followingDisplay, "")) && Boolean(preferString(existing.followersDisplay, "")))
-    );
-    const existingStatsUpdatedAt = Number(existing.statsUpdatedAt || existing.updatedAt || 0);
-    const incomingStatsUpdatedAt = Number(next.statsUpdatedAt || next.updatedAt || 0);
+    const existingStatsUpdatedAt = statsRecordTimestamp(existing);
+    const incomingStatsUpdatedAt = statsRecordTimestamp(next);
     const statsUpdatedAt = incomingHasStats
       ? incomingStatsUpdatedAt || Date.parse(timestamp) || Date.now()
-      : existingHasStats
-        ? existingStatsUpdatedAt
-        : 0;
+      : existingStatsUpdatedAt;
     const snapshot = incomingHasStats && statsUpdatedAt >= existingStatsUpdatedAt ? next : existing;
     const exactDisplayCount = value => /^[\d,，\s]+$/.test(String(value || ""))
       ? toFiniteNumber(String(value).replace(/[，\s]/g, match => match === "，" ? "," : "")) : null;
@@ -396,9 +428,7 @@
       displayName: preferString(next.displayName, existing.displayName),
       profileUrl: preferString(next.profileUrl, existing.profileUrl) || profileUrlForUsername(normalizedUsername),
       avatarUrl: preferString(next.avatarUrl, existing.avatarUrl),
-      bio: typeof next.bio === "string" ? next.bio : existing.bio || "",
-      website: typeof next.website === "string" ? next.website : existing.website || "",
-      verified: typeof next.verified === "boolean" ? next.verified : Boolean(existing.verified),
+      ...mergeProfileMetadata(existing, next, Date.parse(timestamp) || Date.now()),
       followingCount,
       followersCount,
       followingPrecision: snapshot.followingPrecision || (followingCount !== null ? 'exact' : snapshot.followingDisplay ? 'approximate' : 'missing'),
@@ -416,11 +446,18 @@
   }
 
   function statsRecordTimestamp(user) {
+    if (!hasAnyStatsRecord(user)) return 0;
     const explicitTimestamp = Number(user && user.statsUpdatedAt || 0);
     if (explicitTimestamp) {
       return explicitTimestamp;
     }
     return hasCompleteStatsRecord(user) ? Number(user && user.updatedAt || 0) : 0;
+  }
+
+  function hasAnyStatsRecord(user) {
+    return Boolean(user && (firstFiniteNumber(user.followingCount) !== null
+      || firstFiniteNumber(user.followersCount) !== null
+      || preferString(user.followingDisplay, "") || preferString(user.followersDisplay, "")));
   }
 
   function cacheRecordTimestamp(user) {
@@ -494,11 +531,14 @@
     if (!merged) {
       return null;
     }
+    for (const field of PROFILE_METADATA_FIELDS) delete merged[field];
+    Object.assign(merged, mergeProfileMetadata(existing, next));
 
     const existingStatsTimestamp = statsRecordTimestamp(existing);
     const nextStatsTimestamp = statsRecordTimestamp(next);
-    const nextWinsStats = nextStatsTimestamp > existingStatsTimestamp
-      || (nextStatsTimestamp === existingStatsTimestamp && canonicalStringify(next) > canonicalStringify(existing));
+    const nextWinsStats = hasAnyStatsRecord(next) && (!hasAnyStatsRecord(existing)
+      || nextStatsTimestamp > existingStatsTimestamp
+      || (nextStatsTimestamp === existingStatsTimestamp && canonicalStringify(next) > canonicalStringify(existing)));
     const statsWinner = nextWinsStats ? next : existing;
     const followingCount = firstFiniteNumber(statsWinner.followingCount);
     const followersCount = firstFiniteNumber(statsWinner.followersCount);
@@ -837,8 +877,8 @@
       userId: readImportColumn(values, "user_id", "rest_id", "用户 id", "用户ID"),
       displayName: readImportColumn(values, "display_name", "name", "昵称"),
       profileUrl: profileUrl || profileUrlForUsername(username),
-      bio: readImportColumn(values, "bio", "简介"),
-      website: readImportColumn(values, "website", "网站"),
+      ...(hasImportColumn(values, "bio", "简介") ? { bio: readImportColumn(values, "bio", "简介") } : {}),
+      ...(hasImportColumn(values, "website", "网站") ? { website: readImportColumn(values, "website", "网站") } : {}),
       sources: ["import"]
     };
     assignImportedCount(user, "following", following);
@@ -886,6 +926,10 @@
       }
     }
     return "";
+  }
+
+  function hasImportColumn(values, ...names) {
+    return names.some(name => Object.hasOwn(values, name.trim().toLowerCase()));
   }
 
   function assignImportedCount(user, field, value) {
@@ -1231,6 +1275,7 @@
     exportUsersToMarkdown,
     findNameLinkInAnchors,
     formatCompactCount,
+    formatStatsCount,
     isStatsAllowedPath,
     isCachedStatsFresh,
     mergeCachedUserRecords,

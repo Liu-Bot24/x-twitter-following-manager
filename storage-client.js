@@ -2,6 +2,7 @@
   "use strict";
   const CACHE_KEY = "xfs:userStatsCacheV2";
   const GENERATION_KEY = "xfs:cacheGenerationV1";
+  const CLEARED_AT_KEY = "xfs:cacheClearedAtV1";
   const RUNS_KEY = "xfs:activeRunsV1";
   const STATUS_KEY = "xfs:storageStatusV1";
   function request(action, payload = {}) {
@@ -16,5 +17,5 @@
       });
     });
   }
-  global.XFSStorage = { CACHE_KEY, GENERATION_KEY, RUNS_KEY, STATUS_KEY, request };
+  global.XFSStorage = { CACHE_KEY, GENERATION_KEY, CLEARED_AT_KEY, RUNS_KEY, STATUS_KEY, request };
 })(globalThis);
