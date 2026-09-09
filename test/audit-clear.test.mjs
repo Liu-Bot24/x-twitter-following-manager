@@ -11,6 +11,46 @@ const context = await chromium.launchPersistentContext(profile, { ...browserOpti
 after(() => context.close());
 const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
 const id = new URL(worker.url()).hostname;
+for (const responseTiming of ['before read', 'after read']) test(`a new page preserves post-clear requests with response ${responseTiming}`, { timeout: 15000 }, async () => {
+  await worker.evaluate(async () => {
+    await chrome.storage.local.set({ 'xfs:userStatsCacheV2': {}, 'xfs:cacheGenerationV1': 7, 'xfs:cacheClearedAtV1': Date.now() - 60000 });
+    const original = chrome.storage.local.getBytesInUse.bind(chrome.storage.local);
+    chrome.storage.local.getBytesInUse = (keys, callback) => original(keys, result => {
+      chrome.storage.local.getBytesInUse = original;
+      globalThis.releaseInitialRead = () => { globalThis.releaseInitialRead = null; callback(result); };
+    });
+  });
+  let respond, requestArrived;
+  const arrived = new Promise(resolve => { requestArrived = resolve; });
+  await context.route('https://x.com/**', route => {
+    const fulfill = () => route.fulfill({
+    contentType: route.request().url().includes('/i/api/') ? 'application/json' : 'text/html',
+    body: route.request().url().includes('/i/api/') ? JSON.stringify({ legacy: { screen_name: 'startup', friends_count: 12, followers_count: 34 } }) : '<main></main>'
+    });
+    if (responseTiming === 'after read' && route.request().url().includes('/i/api/')) { respond = fulfill; requestArrived(); return; }
+    return fulfill();
+  });
+  const x = await context.newPage();
+  try {
+    await x.goto('https://x.com/startup');
+    const request = x.evaluate(() => fetch('/i/api/graphql/Startup').then(response => response.json()));
+    if (responseTiming === 'before read') await request;
+    else await arrived;
+    await x.waitForTimeout(100);
+    await worker.evaluate(() => globalThis.releaseInitialRead());
+    if (responseTiming === 'after read') {
+      await x.waitForTimeout(100);
+      await respond();
+      await request;
+    }
+    await x.waitForTimeout(900);
+    const cache = await worker.evaluate(async () => (await chrome.storage.local.get('xfs:userStatsCacheV2'))['xfs:userStatsCacheV2']);
+    assert.equal(cache.startup?.followingCount, 12, 'The first request from a new page is newer than the previous clear');
+  } finally {
+    await worker.evaluate(() => globalThis.releaseInitialRead?.());
+    await x.close();
+  }
+});
 test('a network response started before clear cannot repopulate the cleared cache', async () => {
   let delayedRoute, releaseRequest;
   const requested = new Promise(resolve => { releaseRequest = resolve; });

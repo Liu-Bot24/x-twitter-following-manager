@@ -2,6 +2,13 @@
 
 Baseline: `db969e7b8489ba7eceead5591ce17af943947150` (1.1.4). The previously local-only 3-day refresh adjustment from `1b0e8b6` is included, as requested, in the same review candidate.
 
+## Third candidate
+
+The review of `e7a7f588995190ca0eb84d7ca26d53c2fe328909` accepted the original R1–R7 fixes but identified two remaining P2 capture defects, S1 and S2. Both were independently reproduced before repair.
+
+- **S1 — initial cache generation:** a new document starts with an unknown storage generation (`null`) and adopts its first read without invalidating its document-local captures. Actual clear notifications and subsequent generation advances still invalidate captures; the clear timestamp still rejects older requests. Real MV3 tests delay the first read at historical generation 7, covering responses arriving both before and after that read. A separate content-state test clears during initialization and retains only the post-clear batch.
+- **S2 — hover target invalidation:** both asynchronous target checks release the old attempt when the target becomes invalid. Activity-version checks run first, so an obsolete callback does not remove a reservation created after cancellation or clear. Chromium tests cover automatic background/fallback attempts, removal and reappearance of the same account, and recycled rows whose old hover results must be discarded.
+
 ## Second candidate, after independent Pro review
 
 The first review of audit commit `0384d1323b7b72bb28015b6a9a796dcd304991cd` returned **not approved** with R1–R7. All seven findings were independently reproduced locally and addressed:

@@ -21,7 +21,8 @@ async function fixture(options = {}) {
     chrome: { runtime: { onMessage: event }, storage: { onChanged: { addListener(listener) { storageListener = listener; }, removeListener() {} }, local: { get(key, cb) { cb({}); }, set() {} } } },
     XFSStorage: { GENERATION_KEY: GEN, CLEARED_AT_KEY: CLEARED, RUNS_KEY: 'runs', STATUS_KEY: 'status', request(action, payload) {
       if (action === 'read') {
-        if (++reads > 1 && options.deferRecoveryRead) return new Promise(resolve => { resolveRead = resolve; });
+        reads++;
+        if ((reads === 1 && options.deferInitialRead) || (reads > 1 && options.deferRecoveryRead)) return new Promise(resolve => { resolveRead = resolve; });
         return Promise.resolve(snapshot);
       }
       if (allowWrites) { savedUsers.push(...payload.users); return Promise.resolve({ ok: true }); }
@@ -30,13 +31,33 @@ async function fixture(options = {}) {
   });
   vm.runInContext('window = globalThis', context);
   vm.runInContext(coreSource, context);
-  vm.runInContext(contentSource.replace(/\}\)\(\);\s*$/, 'window.audit = { state, mergeUserRecord, persistCacheNow }; })();'), context);
+  vm.runInContext(contentSource.replace(/\}\)\(\);\s*$/, 'window.audit = { state, mergeUserRecord, persistCacheNow, onPageMessage }; })();'), context);
   await new Promise(resolve => setImmediate(resolve));
   return { context, savedUsers, emitStorage: changes => storageListener(changes), allowWrites() { allowWrites = true; }, clear(generation = 1) {
     snapshot = { ...snapshot, generation, clearedAt: Date.now() };
     storageListener({ [GEN]: { newValue: generation }, [CLEARED]: { newValue: snapshot.clearedAt }, [CACHE]: { newValue: {} } });
   }, resolveRead(generation = 1) { resolveRead({ ...snapshot, generation }); }, rejectOldWrite() { const error = new Error('stale generation'); error.code = 'stale_generation'; rejectMerge(error); } };
 }
+
+test('a real clear during initialization discards pre-clear batches and preserves post-clear batches', async () => {
+  const f = await fixture({ deferInitialRead: true }); const api = f.context.audit;
+  const emit = (username, generation, startedAt) => api.onPageMessage({ source: f.context.window, data: {
+    source: f.context.XFollowStatsCore.SOURCE, type: 'users', captureGeneration: generation, requestStartedAt: startedAt,
+    users: [{ username, followingCount: 12, followersCount: 34 }]
+  } });
+  emit('alice', 0, Date.now() - 1000);
+  assert.equal(api.state.earlyUsers.length, 1);
+  f.clear(1);
+  emit('bob', 1, api.state.clearedAt + 1);
+  emit('old_user', 0, api.state.clearedAt - 1);
+  f.resolveRead(0);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(api.state.cacheGeneration, 1);
+  assert.deepEqual([...api.state.cache.keys()], ['bob']);
+  f.allowWrites(); await api.persistCacheNow();
+  assert.deepEqual(f.savedUsers.map(user => user.username), ['bob']);
+  f.context.__xFollowStatsContentCleanup();
+});
 test('a stale write failure cannot erase fresh dirty records captured after clear', async () => {
   const f = await fixture(); const api = f.context.audit;
   api.mergeUserRecord({ username: 'alice', sources: ['feed'] }, { scheduleSave: false });

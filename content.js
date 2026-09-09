@@ -47,7 +47,7 @@
     activeSilentCards: new Set(),
     cache: new Map(),
     dirtyUsers: new Map(),
-    cacheGeneration: 0,
+    cacheGeneration: null,
     captureGeneration: 0,
     clearedAt: 0,
     activeRuns: {},
@@ -983,7 +983,11 @@
         mode: "background",
         timeoutMs: SILENT_HOVER_TIMEOUT_MS
       });
-      if (!isLookupTargetValid(profile, cell, surface) || state.userActivityVersion !== activityVersion) return;
+      if (state.userActivityVersion !== activityVersion) return;
+      if (!isLookupTargetValid(profile, cell, surface)) {
+        state.hoverAttempts.delete(profile.username);
+        return;
+      }
       if (applyHoverOutcome(profile, silentOutcome, jobId, "background")) {
         return;
       }
@@ -1008,7 +1012,11 @@
         mode: "fallback",
         timeoutMs: HOVER_TIMEOUT_MS
       });
-      if (!isLookupTargetValid(profile, cell, surface) || state.userActivityVersion !== activityVersion) return;
+      if (state.userActivityVersion !== activityVersion) return;
+      if (!isLookupTargetValid(profile, cell, surface)) {
+        state.hoverAttempts.delete(profile.username);
+        return;
+      }
       if (applyHoverOutcome(profile, fallbackOutcome, jobId, "fallback")) {
         return;
       }
@@ -1570,8 +1578,12 @@
     let result;
     try { result = await storage.request('read'); }
     catch (error) { error.cacheGeneration = requestedGeneration; throw error; }
-    if (result.generation < state.cacheGeneration) return;
-    if (result.generation > state.cacheGeneration) {
+    if (state.cacheGeneration === null) {
+      // First read adopts the persisted generation. Requests made by this new
+      // document still belong to its initial capture generation and cutoff.
+      state.cacheGeneration = result.generation;
+    } else if (result.generation < state.cacheGeneration) return;
+    else if (result.generation > state.cacheGeneration) {
       state.cacheGeneration = result.generation;
       clearLocalCache();
     }

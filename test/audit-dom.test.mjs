@@ -21,11 +21,55 @@ async function fixture(html) {
   await page.addScriptTag({ content: coreSource });
   await page.addScriptTag({ content: storageSource });
   await page.addScriptTag({ content: i18nSource });
-  await page.addScriptTag({ content: source.replace(/\}\)\(\);\s*$/, 'window.audit = { state, processCell, updateVisibleCells, readCurrentProfileStats, hoverCardMatchesUsername, setupObservers, scanStatsSurfaces, shouldQueueHover, applyHoverOutcome, getFreshCachedStats }; })();') });
+  await page.addScriptTag({ content: source.replace(/\}\)\(\);\s*$/, 'window.audit = { state, processCell, updateVisibleCells, readCurrentProfileStats, hoverCardMatchesUsername, setupObservers, scanStatsSurfaces, shouldQueueHover, applyHoverOutcome, getFreshCachedStats, hydrateFromHover, readProfileFromCell }; })();') });
   await page.waitForTimeout(50);
   return page;
 }
 const native = '<main><article data-testid="tweet"><div data-testid="User-Name"><a href="/alice">Alice</a><a href="/alice">@alice</a></div><div data-testid="tweetText">Hello</div></article></main>';
+
+for (const stage of ['background', 'fallback']) test(`automatic ${stage} hover restarts when the removed account row reappears`, async () => {
+  const page = await fixture(native);
+  try {
+    await page.evaluate(stage => {
+      let attempts = 0;
+      document.querySelector('article a').addEventListener('pointerover', () => {
+        if (++attempts === (stage === 'background' ? 1 : 2)) document.querySelector('article').remove();
+      });
+    }, stage);
+    await page.waitForFunction(() => audit.state.hoverJobSequence > 0 && !audit.state.hovering, null, { timeout: 6500 });
+    assert.equal(await page.evaluate(() => audit.state.hoverAttempts.has('alice')), false);
+    const previousJobs = await page.evaluate(() => audit.state.hoverJobSequence);
+    await page.evaluate(html => { document.querySelector('main').outerHTML = html; }, native);
+    await page.waitForFunction(previous => audit.state.hoverJobSequence > previous, previousJobs, { timeout: 2000 });
+  } finally { await page.close(); }
+});
+
+for (const stage of ['background', 'fallback']) test(`a ${stage} hover whose cell is recycled releases its attempt without accepting the stale result`, async () => {
+  const page = await fixture('<main></main>');
+  try {
+    const result = await page.evaluate(async ({ html, stage }) => {
+      audit.state.mutationObserver.disconnect();
+      audit.state.intersectionObserver.disconnect();
+      document.querySelector('main').outerHTML = html;
+      const cell = document.querySelector('article');
+      audit.state.visibleCells.add(cell);
+      const profile = audit.readProfileFromCell(cell, 'feed');
+      let attempts = 0;
+      profile.avatarOrNameLink.addEventListener('pointerover', () => {
+        if (++attempts !== (stage === 'background' ? 1 : 2)) return;
+        cell.querySelectorAll('a').forEach(anchor => { anchor.href = '/bob'; });
+        document.body.insertAdjacentHTML('beforeend', '<div data-testid="HoverCard"><a href="/alice">Alice</a><div><a href="/alice/following">12 Following</a><a href="/alice/followers">34 Followers</a></div></div>');
+      });
+      audit.shouldQueueHover('alice', false);
+      await audit.hydrateFromHover(profile, cell, 'feed');
+      document.querySelector('[data-testid="HoverCard"]').remove();
+      cell.querySelectorAll('a').forEach(anchor => { anchor.href = '/alice'; });
+      return { saved: Boolean(audit.getFreshCachedStats('alice')), eligible: audit.shouldQueueHover('alice', false) };
+    }, { html: native, stage });
+    assert.equal(result.saved, false, 'A recycled cell must not accept the old hover result');
+    assert.equal(result.eligible, true, 'The same account must remain eligible when it reappears');
+  } finally { await page.close(); }
+});
 test('disabling display and then receiving stats preserves native tweet', async () => {
   const page = await fixture(native);
   const result = await page.evaluate(() => {
