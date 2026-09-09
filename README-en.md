@@ -119,7 +119,11 @@ For accounts that only came from a user list or an imported file, the manager ex
 
 ## Import And Export
 
-CSV is the default export format. Markdown is also supported.
+“CSV (spreadsheet)” is the default format; “CSV (raw data)” and Markdown are also available. Spreadsheet mode prefixes formula-like text with an apostrophe. Raw mode preserves that text for programmatic exchange and should not be opened directly for spreadsheet calculation. The `export_mode` column lets this extension reverse the prefix on import. Spreadsheet programs and subsequent save/reopen cycles differ; this is not a safety guarantee for every application or round trip.
+
+CSV includes displayed counts, precision, statistics source and collection time. Abbreviated counts are marked `approximate`; missing exact counts never reuse values from an older observation. Markdown round-trips special characters and profile links in names, bios and the latest post, but neither CSV nor Markdown is a complete account-database backup. Both export the account list and latest post, not the entire captured post history. Before clearing the cache, ensure these fields are sufficient for what you want to retain.
+
+The manager displays 100 accounts per page. Search and “Select current results” apply to all matching accounts, and selection survives page changes. The Popup and manager display local-storage usage. Growth beyond the 9 MiB working limit is refused with a visible save error, without evicting existing accounts. Export the accounts you need before clearing the cache in the Popup and importing them again. Expired counts trigger collection, not account deletion.
 
 CSV exports include:
 

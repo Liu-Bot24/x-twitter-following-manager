@@ -2,6 +2,7 @@
   "use strict";
 
   const SOURCE = "x-follow-stats-extension";
+  const PROFILE_METADATA_FIELDS = ["bio", "website", "verified"];
   const MAX_GRAPH_DEPTH = 18;
   const MAX_GRAPH_NODES = 12000;
   const USERNAME_RE = /^[A-Za-z0-9_]{1,15}$/;
@@ -53,7 +54,14 @@
     "latest_post_kind",
     "latest_post_text",
     "latest_post_url",
-    "observed_posts_count"
+    "observed_posts_count",
+    "following_display",
+    "followers_display",
+    "following_precision",
+    "followers_precision",
+    "stats_updated_at",
+    "stats_source",
+    "export_mode"
   ];
 
   function normalizeUsername(value) {
@@ -177,19 +185,28 @@
     return null;
   }
 
+  const countFormatters = new Map();
   function formatCompactCount(count, locale) {
     const numeric = toFiniteNumber(count);
     if (numeric === null) {
       return "";
     }
     try {
-      return new Intl.NumberFormat(locale || "zh-CN", {
-        maximumFractionDigits: numeric >= 10000 ? 1 : 0,
-        notation: "compact"
-      }).format(numeric);
+      const language = locale || "zh-CN";
+      const digits = numeric >= 10000 ? 1 : 0;
+      const key = language + ':' + digits;
+      if (!countFormatters.has(key)) countFormatters.set(key, new Intl.NumberFormat(language, { maximumFractionDigits: digits, notation: 'compact' }));
+      return countFormatters.get(key).format(numeric);
     } catch {
       return String(numeric);
     }
+  }
+
+  function formatStatsCount(user, field, locale) {
+    const display = preferString(user && user[field + 'Display'], '');
+    const count = firstFiniteNumber(user && user[field + 'Count']);
+    if (user && user[field + 'Precision'] === 'approximate') return display || formatCompactCount(count, locale);
+    return count !== null ? formatCompactCount(count, locale) : display;
   }
 
   function profileUrlForUsername(username) {
@@ -322,7 +339,7 @@
         seen.delete(item);
         return result;
       }
-      const result = {};
+      const result = Object.create(null);
       for (const key of Object.keys(item).sort()) {
         if (typeof item[key] !== "undefined") {
           result[key] = normalize(item[key]);
@@ -332,6 +349,36 @@
       return result;
     }
     return JSON.stringify(normalize(value));
+  }
+
+  function metadataTimestamp(record, field) {
+    const valid = Object.hasOwn(record, field) && (field === "verified"
+      ? typeof record[field] === "boolean" : typeof record[field] === "string");
+    if (!valid) return 0;
+    if (Object.hasOwn(record, "metadataUpdatedAt")) {
+      const timestamp = Number(record.metadataUpdatedAt?.[field]);
+      return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : 0;
+    }
+    // Legacy empty/false values may have been synthesized by a DOM-only record.
+    // Retain meaningful legacy values; only new observations can assert a clear.
+    return record[field] ? cacheRecordTimestamp(record) || 1 : 0;
+  }
+
+  function mergeProfileMetadata(existing, next, observedAt) {
+    const result = { metadataUpdatedAt: {} };
+    const isObservation = observedAt !== undefined && !Object.hasOwn(next, "metadataUpdatedAt");
+    for (const field of PROFILE_METADATA_FIELDS) {
+      const supplied = Object.hasOwn(next, field) && (field === "verified"
+        ? typeof next[field] === "boolean" : typeof next[field] === "string");
+      const previousTime = metadataTimestamp(existing, field);
+      const nextTime = isObservation && supplied ? observedAt : metadataTimestamp(next, field);
+      if (!previousTime && !nextTime) continue;
+      const nextWins = nextTime > previousTime || (nextTime === previousTime
+        && (isObservation || canonicalStringify(next[field]) > canonicalStringify(existing[field])));
+      result[field] = nextWins ? next[field] : existing[field];
+      result.metadataUpdatedAt[field] = Math.max(previousTime, nextTime);
+    }
+    return result;
   }
 
   function mergeObservedUser(current, incoming, now) {
@@ -344,23 +391,20 @@
     const timestamp = now || new Date().toISOString();
     const existing = current && typeof current === "object" ? current : {};
     const next = incoming && typeof incoming === "object" ? incoming : {};
-    const followingCount = firstFiniteNumber(next.followingCount, existing.followingCount);
-    const followersCount = firstFiniteNumber(next.followersCount, existing.followersCount);
     const incomingHasStats = (
-      (Number.isFinite(next.followingCount) && Number.isFinite(next.followersCount))
-      || (Boolean(preferString(next.followingDisplay, "")) && Boolean(preferString(next.followersDisplay, "")))
+      Number.isFinite(next.followingCount) || Number.isFinite(next.followersCount)
+      || Boolean(preferString(next.followingDisplay, "")) || Boolean(preferString(next.followersDisplay, ""))
     );
-    const existingHasStats = (
-      (Number.isFinite(existing.followingCount) && Number.isFinite(existing.followersCount))
-      || (Boolean(preferString(existing.followingDisplay, "")) && Boolean(preferString(existing.followersDisplay, "")))
-    );
-    const existingStatsUpdatedAt = Number(existing.statsUpdatedAt || existing.updatedAt || 0);
-    const incomingStatsUpdatedAt = Number(next.statsUpdatedAt || next.updatedAt || 0);
+    const existingStatsUpdatedAt = statsRecordTimestamp(existing);
+    const incomingStatsUpdatedAt = statsRecordTimestamp(next);
     const statsUpdatedAt = incomingHasStats
       ? incomingStatsUpdatedAt || Date.parse(timestamp) || Date.now()
-      : existingHasStats
-        ? existingStatsUpdatedAt
-        : 0;
+      : existingStatsUpdatedAt;
+    const snapshot = incomingHasStats && statsUpdatedAt >= existingStatsUpdatedAt ? next : existing;
+    const exactDisplayCount = value => /^[\d,，\s]+$/.test(String(value || ""))
+      ? toFiniteNumber(String(value).replace(/[，\s]/g, match => match === "，" ? "," : "")) : null;
+    const followingCount = firstFiniteNumber(snapshot.followingCount, exactDisplayCount(snapshot.followingDisplay));
+    const followersCount = firstFiniteNumber(snapshot.followersCount, exactDisplayCount(snapshot.followersDisplay));
     const incomingPosts = [];
     if (Array.isArray(next.observedPosts)) {
       incomingPosts.push(...next.observedPosts.map(post => (
@@ -384,28 +428,36 @@
       displayName: preferString(next.displayName, existing.displayName),
       profileUrl: preferString(next.profileUrl, existing.profileUrl) || profileUrlForUsername(normalizedUsername),
       avatarUrl: preferString(next.avatarUrl, existing.avatarUrl),
-      bio: preferString(next.bio, existing.bio),
-      website: preferString(next.website, existing.website),
-      verified: Boolean(next.verified || existing.verified),
+      ...mergeProfileMetadata(existing, next, Date.parse(timestamp) || Date.now()),
       followingCount,
       followersCount,
-      followingDisplay: preferString(next.followingDisplay, existing.followingDisplay) || formatCompactCount(followingCount),
-      followersDisplay: preferString(next.followersDisplay, existing.followersDisplay) || formatCompactCount(followersCount),
+      followingPrecision: snapshot.followingPrecision || (followingCount !== null ? 'exact' : snapshot.followingDisplay ? 'approximate' : 'missing'),
+      followersPrecision: snapshot.followersPrecision || (followersCount !== null ? 'exact' : snapshot.followersDisplay ? 'approximate' : 'missing'),
+      followingDisplay: preferString(snapshot.followingDisplay, "") || formatCompactCount(followingCount),
+      followersDisplay: preferString(snapshot.followersDisplay, "") || formatCompactCount(followersCount),
       sources: compactUniqueList([...(existing.sources || []), ...(next.sources || [])]),
       firstSeenAt: existing.firstSeenAt || timestamp,
       lastSeenAt: timestamp,
       updatedAt: Date.parse(timestamp) || Date.now(),
-      statsUpdatedAt,
+      statsUpdatedAt: snapshot === next ? statsUpdatedAt : existingStatsUpdatedAt,
+      statsSource: snapshot.statsSource || "",
       observedPosts: mergeObservedPosts(existing.observedPosts, incomingPosts)
     };
   }
 
   function statsRecordTimestamp(user) {
+    if (!hasAnyStatsRecord(user)) return 0;
     const explicitTimestamp = Number(user && user.statsUpdatedAt || 0);
     if (explicitTimestamp) {
       return explicitTimestamp;
     }
     return hasCompleteStatsRecord(user) ? Number(user && user.updatedAt || 0) : 0;
+  }
+
+  function hasAnyStatsRecord(user) {
+    return Boolean(user && (firstFiniteNumber(user.followingCount) !== null
+      || firstFiniteNumber(user.followersCount) !== null
+      || preferString(user.followingDisplay, "") || preferString(user.followersDisplay, "")));
   }
 
   function cacheRecordTimestamp(user) {
@@ -479,11 +531,14 @@
     if (!merged) {
       return null;
     }
+    for (const field of PROFILE_METADATA_FIELDS) delete merged[field];
+    Object.assign(merged, mergeProfileMetadata(existing, next));
 
     const existingStatsTimestamp = statsRecordTimestamp(existing);
     const nextStatsTimestamp = statsRecordTimestamp(next);
-    const nextWinsStats = nextStatsTimestamp > existingStatsTimestamp
-      || (nextStatsTimestamp === existingStatsTimestamp && canonicalStringify(next) > canonicalStringify(existing));
+    const nextWinsStats = hasAnyStatsRecord(next) && (!hasAnyStatsRecord(existing)
+      || nextStatsTimestamp > existingStatsTimestamp
+      || (nextStatsTimestamp === existingStatsTimestamp && canonicalStringify(next) > canonicalStringify(existing)));
     const statsWinner = nextWinsStats ? next : existing;
     const followingCount = firstFiniteNumber(statsWinner.followingCount);
     const followersCount = firstFiniteNumber(statsWinner.followersCount);
@@ -491,7 +546,10 @@
     merged.followersCount = followersCount;
     merged.followingDisplay = preferString(statsWinner.followingDisplay, "") || formatCompactCount(followingCount);
     merged.followersDisplay = preferString(statsWinner.followersDisplay, "") || formatCompactCount(followersCount);
+    merged.followingPrecision = statsWinner.followingPrecision || (followingCount !== null ? 'exact' : statsWinner.followingDisplay ? 'approximate' : 'missing');
+    merged.followersPrecision = statsWinner.followersPrecision || (followersCount !== null ? 'exact' : statsWinner.followersDisplay ? 'approximate' : 'missing');
     merged.statsUpdatedAt = Math.max(existingStatsTimestamp, nextStatsTimestamp);
+    merged.statsSource = statsWinner.statsSource || "";
     merged.updatedAt = Math.max(existingTimestamp, nextTimestamp);
     merged.sources = compactUniqueList([...(existing.sources || []), ...(next.sources || [])]).sort();
     const existingFirstSeenAt = Date.parse(existing.firstSeenAt || "") || 0;
@@ -514,8 +572,8 @@
     const incoming = incomingCache && typeof incomingCache === "object" && !Array.isArray(incomingCache)
       ? incomingCache
       : {};
-    const normalizedIncoming = {};
-    const reconciled = {};
+    const normalizedIncoming = Object.create(null);
+    const reconciled = Object.create(null);
 
     for (const [rawUsername, user] of Object.entries(incoming)) {
       const username = normalizeUsername(rawUsername);
@@ -612,21 +670,32 @@
       latest_post_kind: latestPost ? exportPostKind(latestPost.kind) : "",
       latest_post_text: latestPost ? latestPost.text || "" : "",
       latest_post_url: latestPost ? latestPost.url || "" : "",
-      observed_posts_count: Array.isArray(user.observedPosts) ? user.observedPosts.length : 0
+      observed_posts_count: Array.isArray(user.observedPosts) ? user.observedPosts.length : 0,
+      following_display: user.followingDisplay || '',
+      followers_display: user.followersDisplay || '',
+      following_precision: user.followingPrecision || (Number.isFinite(user.followingCount) ? 'exact' : user.followingDisplay ? 'approximate' : 'missing'),
+      followers_precision: user.followersPrecision || (Number.isFinite(user.followersCount) ? 'exact' : user.followersDisplay ? 'approximate' : 'missing'),
+      stats_updated_at: user.statsUpdatedAt || '',
+      stats_source: user.statsSource || ''
     };
   }
 
-  function exportUsersToCsv(users) {
+  function exportUsersToCsv(users, options = {}) {
     const rows = [EXPORT_FIELDS.join(",")];
     for (const user of users || []) {
       const row = userExportRow(user);
-      rows.push(EXPORT_FIELDS.map(field => csvEscape(row[field])).join(","));
+      row.export_mode = options.spreadsheetSafe === false ? 'raw' : 'spreadsheet-safe';
+      rows.push(EXPORT_FIELDS.map(field => {
+        let value = row[field];
+        if (options.spreadsheetSafe !== false && typeof value === 'string' && /^[\s\uFEFF]*[=+@\-']|^[\t\r\n]/.test(value)) value = "'" + value;
+        return csvEscape(value);
+      }).join(','));
     }
     return `${rows.join("\n")}\n`;
   }
 
   function markdownEscape(value) {
-    return String(value || "").replace(/\|/g, "\\|").trim();
+    return String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/([\\\[\]()*_|])/g, "\\$1").replace(/\r?\n/g, "<br>").trim();
   }
 
   function exportUsersToMarkdown(users) {
@@ -790,6 +859,9 @@
   }
 
   function importedUserFromColumns(values) {
+    if (values.export_mode === 'spreadsheet-safe') {
+      values = Object.fromEntries(Object.entries(values).map(([key, value]) => [key, typeof value === 'string' && value.startsWith("'") ? value.slice(1) : value]));
+    }
     const profileUrl = readImportColumn(values, "profile_url", "url", "主页链接", "账号链接", "链接");
     const username = usernameFromProfileHref(profileUrl, "https://x.com/");
     if (!username) {
@@ -805,12 +877,24 @@
       userId: readImportColumn(values, "user_id", "rest_id", "用户 id", "用户ID"),
       displayName: readImportColumn(values, "display_name", "name", "昵称"),
       profileUrl: profileUrl || profileUrlForUsername(username),
-      bio: readImportColumn(values, "bio", "简介"),
-      website: readImportColumn(values, "website", "网站"),
+      ...(hasImportColumn(values, "bio", "简介") ? { bio: readImportColumn(values, "bio", "简介") } : {}),
+      ...(hasImportColumn(values, "website", "网站") ? { website: readImportColumn(values, "website", "网站") } : {}),
       sources: ["import"]
     };
     assignImportedCount(user, "following", following);
     assignImportedCount(user, "followers", followers);
+    for (const field of ['following', 'followers']) {
+      const display = readImportColumn(values, field + '_display');
+      if (display) {
+        if (user[field + 'Count'] == null) assignImportedCount(user, field, display);
+        user[field + 'Display'] = display;
+      }
+      const precision = readImportColumn(values, field + '_precision');
+      if (['exact', 'approximate', 'missing'].includes(precision)) user[field + 'Precision'] = precision;
+    }
+    const statsTime = Number(readImportColumn(values, 'stats_updated_at'));
+    if (Number.isFinite(statsTime) && statsTime > 0) user.statsUpdatedAt = statsTime;
+    user.statsSource = readImportColumn(values, 'stats_source') || 'import';
     const firstSeenAt = readImportColumn(values, "first_seen_at", "首次看到");
     const lastSeenAt = readImportColumn(values, "last_seen_at", "最近看到");
     if (firstSeenAt) {
@@ -844,12 +928,17 @@
     return "";
   }
 
+  function hasImportColumn(values, ...names) {
+    return names.some(name => Object.hasOwn(values, name.trim().toLowerCase()));
+  }
+
   function assignImportedCount(user, field, value) {
     const text = String(value || "").trim();
     if (!text || text === "-") {
       return;
     }
     const numeric = parseHumanCount(text);
+    user[field + 'Precision'] = /[万萬亿億千百kmb]/i.test(text) ? 'approximate' : numeric !== null ? 'exact' : 'missing';
     if (field === "following") {
       if (numeric !== null) {
         user.followingCount = numeric;
@@ -920,7 +1009,7 @@
     }
     const lines = String(text || "").split(/\r?\n/);
     for (const line of lines) {
-      const itemMatch = line.match(/^- \[([^\]]+)\]\(([^)]+)\) - @([A-Za-z0-9_]{1,15})(?: - (.*))?$/);
+      const itemMatch = line.match(/^- \[((?:\\.|[^\]\\])+)\]\(([^)]+)\) - @([A-Za-z0-9_]{1,15})(?: - (.*))?$/);
       if (itemMatch) {
         pushCurrent();
         const profileUsername = usernameFromProfileHref(itemMatch[2], "https://x.com/");
@@ -940,16 +1029,16 @@
         }
         continue;
       }
-      const linkOnlyMatch = line.match(/^\s*(?:[-*]\s*)?\[([^\]]*)\]\(([^)]+)\)\s*$/);
+      const linkOnlyMatch = line.match(/^(?:[-*]\s*)?\[((?:\\.|[^\]\\])*)\]\(([^)]+)\)\s*$/);
       if (linkOnlyMatch && usernameFromProfileHref(linkOnlyMatch[2], "https://x.com/")) {
         const title = unescapeMarkdownText(linkOnlyMatch[1]);
         const displayName = normalizeUsername(title) || title.startsWith("@") || /^https?:\/\//i.test(title) ? "" : title;
         pushProfileLink(linkOnlyMatch[2].trim(), displayName);
         continue;
       }
-      const rawUrlMatch = line.match(/https?:\/\/(?:x|twitter)\.com\/[^\s)]+/i);
-      if (rawUrlMatch && usernameFromProfileHref(rawUrlMatch[0], "https://x.com/")) {
-        pushProfileLink(rawUrlMatch[0].trim(), "");
+      const rawUrlMatch = line.match(/^(?:[-*]\s*)?(https?:\/\/(?:x|twitter)\.com\/[^\s)]+)\s*$/i);
+      if (rawUrlMatch && usernameFromProfileHref(rawUrlMatch[1], "https://x.com/")) {
+        pushProfileLink(rawUrlMatch[1].trim(), "");
         continue;
       }
       if (!current) {
@@ -1001,7 +1090,7 @@
   }
 
   function unescapeMarkdownText(value) {
-    return String(value || "").replace(/\\\|/g, "|").trim();
+    return String(value || "").replace(/<br>/g, "\n").replace(/&gt;/g, ">").replace(/&lt;/g, "<").replace(/&amp;/g, "&").replace(/\\([\\\[\]()*_|])/g, "$1").trim();
   }
 
   function cleanDisplayCount(value) {
@@ -1115,7 +1204,16 @@
         followingDisplay: formatCompactCount(followingCount),
         followersDisplay: formatCompactCount(followersCount)
       };
+      if (!Object.hasOwn(legacy, 'description')) delete record.bio;
+      if (!Object.hasOwn(legacy, 'url') && !Object.hasOwn(legacy.entities || {}, 'url')) delete record.website;
+      if (!Object.hasOwn(legacy, 'verified') && !Object.hasOwn(candidate, 'is_blue_verified')) delete record.verified;
+      const previous = seenUsers.get(username);
+      if (previous) {
+        record.userId ||= previous.userId;
+        if (previous.verified === true || !Object.hasOwn(record, "verified")) record.verified = previous.verified;
+      }
       seenUsers.set(username, record);
+      if (legacy !== candidate) seenObjects.add(legacy);
     }
 
     function visit(value, depth) {
@@ -1177,6 +1275,7 @@
     exportUsersToMarkdown,
     findNameLinkInAnchors,
     formatCompactCount,
+    formatStatsCount,
     isStatsAllowedPath,
     isCachedStatsFresh,
     mergeCachedUserRecords,

@@ -654,7 +654,7 @@ assert.match(managerSource, /t\("managerNoPostImport"\)/);
 assert.match(managerSource, /selectObservedPost/);
 assert.doesNotMatch(managerSource, /includeComments:\s*showCommentsToggle\.checked/);
 assert.match(managerSource, /includeComments:\s*true/);
-assert.match(managerSource, /user\.sources\.length > 0 \|\| \(core\.userHasCommentSource/);
+assert.match(managerSource, /user\.sources\.length > 0 \|\| core\.userHasCommentSource/);
 assert.match(managerSource, /post-kind-badge/);
 assert.match(managerSource, /post-summary-content/);
 assert.match(managerSource, /if \(kindLabel\)/);
@@ -690,7 +690,7 @@ assert.match(managerSource, /if \(result && result\.manualStop\)/);
 assert.match(managerSource, /tabsCreate\(\{\s*url,\s*active:\s*true\s*\}\)/);
 assert.match(managerSource, /tabsUpdateWithRetry\(sequentialUpdate\.tabId,\s*\{\s*url\s*\}\)/);
 assert.doesNotMatch(managerSource, /chrome\.tabs\.update\(managerTabId/);
-assert.match(managerSource, /forceLockListDuringRun/);
+assert.doesNotMatch(managerSource, /forceLockListDuringRun|restoreDisplaySettings/);
 assert.match(managerSource, /SEQUENTIAL_STEP_PAUSE_MIN_MS/);
 assert.match(managerSource, /selectMissingVisible/);
 assert.match(managerSource, /invertVisibleSelection/);
@@ -742,7 +742,7 @@ const storeUsersSource = contentSource.slice(
   contentSource.indexOf("function storeUsers"),
   contentSource.indexOf("function mergeUserRecord")
 );
-assert.equal((storeUsersSource.match(/persistCacheNow\(\)/g) || []).length, 1);
+assert.equal((storeUsersSource.match(/schedulePersist\(\)/g) || []).length, 1);
 assert.match(contentSource, /mergeExternalCache/);
 assert.match(managerSource, /type:\s*"xfs:updateProfileStats",\s*username,\s*force:\s*true/);
 assert.match(managerSource, /refreshRequestedAt\s*=\s*Date\.now\(\)[\s\S]*?openOrNavigateSequentialTab/);
@@ -757,7 +757,6 @@ assert.doesNotMatch(popupSource, /silentMode|silentModeToggle/);
 assert.doesNotMatch(popupHtml, /silent-mode-toggle|popupSilentMode|tooltipSilentMode/);
 assert.doesNotMatch(i18nSource, /popupSilentMode|tooltipSilentMode|静默模式|Silent mode/);
 assert.doesNotMatch(popupHtml, /popupHiddenHoverFallback|hidden-hover-toggle/);
-assert.match(popupSource, /chrome\.storage\.local\.set\(\{\s*\[STORAGE_KEY\]:\s*\{\}\s*\}\)/);
 assert.match(contentSource, /changes\[STORAGE_KEY\]/);
 assert.match(contentSource, /clearLocalCache\(\);/);
 assert.match(contentSource, /shouldRecordUsername/);
@@ -788,7 +787,6 @@ assert.match(popupSource, /languageToggle/);
 assert.match(popupSource, /updateLanguagePreference/);
 assert.match(popupSource, /languageToggle\.checked \? "zh_CN" : "en"/);
 assert.match(popupSource, /languageToggle\.checked = language === "zh_CN"/);
-assert.match(popupSource, /chrome\.storage\.local\.set\(\{\s*\[LANGUAGE_KEY\]/);
 assert.match(contentSource, /LANGUAGE_KEY/);
 assert.match(contentSource, /xfs:updateLanguage/);
 assert.match(contentSource, /XFSI18n/);
@@ -796,7 +794,7 @@ assert.equal(manifest.content_scripts[0].world, "MAIN");
 assert.deepEqual(Array.from(manifest.content_scripts[0].js), ["page-hook-core.js", "page-hook.js"]);
 assert.equal(manifest.content_scripts[0].js.includes("stats-core.js"), false);
 assert.equal(manifest.content_scripts[1].world, "ISOLATED");
-assert.deepEqual(Array.from(manifest.content_scripts[1].js), ["stats-core.js", "i18n.js", "content.js"]);
+assert.deepEqual(Array.from(manifest.content_scripts[1].js), ["stats-core.js", "storage-client.js", "i18n.js", "content.js"]);
 assert.deepEqual(
   manifest.content_scripts[0].js.filter(file => manifest.content_scripts[1].js.includes(file)),
   []

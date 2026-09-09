@@ -3,6 +3,7 @@
 
   const core = window.XFollowStatsCore;
   const i18n = window.XFSI18n;
+  const storage = window.XFSStorage;
   const STORAGE_KEY = "xfs:userStatsCacheV2";
   const DISPLAY_SETTINGS_KEY = "xfs:displaySettingsV1";
   const MANAGER_SETTINGS_KEY = "xfs:managerSettingsV1";
@@ -49,6 +50,10 @@
   let visibleUsers = [];
   let statusMessage = "";
   let languagePreference = null;
+  let pageIndex = 0;
+  let loadSequence = 0;
+  const PAGE_SIZE = 100;
+  const searchIndex = new WeakMap();
   const sequentialUpdate = {
     cancelRequested: false,
     running: false,
@@ -79,10 +84,16 @@
   applyStaticI18n();
   loadLanguagePreference();
 
-  search.addEventListener("input", render);
+  let searchTimer;
+  search.addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { pageIndex = 0; render(); }, 100);
+  });
+  document.getElementById('previous-page').addEventListener('click', () => { pageIndex--; render(); });
+  document.getElementById('next-page').addEventListener('click', () => { pageIndex++; render(); });
   showCommentsToggle.addEventListener("change", updateManagerSettings);
   preferCommentsToggle.addEventListener("change", updateManagerSettings);
-  sourceFilter.addEventListener("change", render);
+  sourceFilter.addEventListener("change", () => { pageIndex = 0; render(); });
   exportButton.addEventListener("click", exportSelected);
   sequentialUpdateButton.addEventListener("click", startSequentialUpdate);
   importButton.addEventListener("click", () => importFileInput.click());
@@ -91,13 +102,13 @@
   lockListToggle.addEventListener("change", updateLockListSetting);
   selectVisibleButton.addEventListener("click", () => {
     visibleUsers.forEach(user => selected.add(user.username));
-    render();
+    updateSelectionControls();
   });
   selectMissingButton.addEventListener("click", selectMissingVisible);
   invertSelectionButton.addEventListener("click", invertVisibleSelection);
   clearSelectionButton.addEventListener("click", () => {
     selected.clear();
-    render();
+    updateSelectionControls();
   });
   refreshButton.addEventListener("click", loadUsers);
   toggleVisible.addEventListener("change", () => {
@@ -106,10 +117,11 @@
     } else {
       visibleUsers.forEach(user => selected.delete(user.username));
     }
-    render();
+    updateSelectionControls();
   });
   chrome.storage.onChanged.addListener(changes => {
-    if (changes[STORAGE_KEY]) {
+    if (changes[storage.GENERATION_KEY] && sequentialUpdate.running) sequentialUpdate.cancelRequested = true;
+    if (changes[STORAGE_KEY] || changes[storage.STATUS_KEY]) {
       loadUsers();
     }
     if (changes[DISPLAY_SETTINGS_KEY]) {
@@ -128,16 +140,20 @@
   loadDisplaySettings();
   loadUsers();
 
-  function loadUsers() {
-    chrome.storage.local.get(STORAGE_KEY, result => {
-      const cache = result && result[STORAGE_KEY] && typeof result[STORAGE_KEY] === "object" ? result[STORAGE_KEY] : {};
-      users = Object.values(cache)
+  async function loadUsers() {
+    const sequence = ++loadSequence;
+    try {
+      const result = await storage.request('read');
+      if (sequence !== loadSequence) return;
+      users = Object.values(result.cache)
         .filter(user => user && core.normalizeUsername(user.username))
         .map(normalizeStoredUser)
-        .filter(user => user.sources.length > 0 || (core.userHasCommentSource && core.userHasCommentSource(user)));
+        .filter(user => user.sources.length > 0 || core.userHasCommentSource(user));
+      document.getElementById('storage-usage').textContent = t('storageUsage', (result.bytesUsed / 1048576).toFixed(2), (result.budgetBytes / 1048576).toFixed(0));
+      if (result.status.error) setStatusMessage(t('storageSaveFailed', result.status.error));
       pruneSelection();
       render();
-    });
+    } catch (error) { setStatusMessage(t('storageSaveFailed', error.message)); }
   }
 
   function render() {
@@ -149,11 +165,21 @@
     );
     rows.textContent = "";
     const fragment = document.createDocumentFragment();
-    for (const user of visibleUsers) {
+    const pageCount = Math.max(1, Math.ceil(visibleUsers.length / PAGE_SIZE));
+    pageIndex = Math.max(0, Math.min(pageIndex, pageCount - 1));
+    for (const user of visibleUsers.slice(pageIndex * PAGE_SIZE, (pageIndex + 1) * PAGE_SIZE)) {
       fragment.appendChild(renderRow(user));
     }
+    document.getElementById('page-status').textContent = t('managerPageStatus', pageIndex + 1, pageCount);
+    document.getElementById('previous-page').disabled = pageIndex === 0;
+    document.getElementById('next-page').disabled = pageIndex === pageCount - 1;
     rows.appendChild(fragment);
     empty.hidden = users.length !== 0;
+    updateSelectionControls();
+  }
+
+  function updateSelectionControls() {
+    rows.querySelectorAll('tr').forEach(row => { row.querySelector('input[type="checkbox"]').checked = selected.has(row.dataset.username); });
     const selectedVisibleCount = visibleUsers.filter(user => selected.has(user.username)).length;
     toggleVisible.checked = visibleUsers.length > 0 && selectedVisibleCount === visibleUsers.length;
     toggleVisible.indeterminate = selectedVisibleCount > 0 && selectedVisibleCount < visibleUsers.length;
@@ -171,6 +197,7 @@
 
   function renderRow(user) {
     const tr = document.createElement("tr");
+    tr.dataset.username = user.username;
     tr.appendChild(cell(renderCheckbox(user)));
     tr.appendChild(cell(renderUser(user)));
     tr.appendChild(cell(displayFollowing(user) || "-", "count-cell"));
@@ -183,7 +210,7 @@
 
   function selectMissingVisible() {
     visibleUsers.filter(user => !hasCompleteStats(user)).forEach(user => selected.add(user.username));
-    render();
+    updateSelectionControls();
   }
 
   function invertVisibleSelection() {
@@ -194,7 +221,7 @@
         selected.add(user.username);
       }
     });
-    render();
+    updateSelectionControls();
   }
 
   function hasCompleteStats(user) {
@@ -211,11 +238,11 @@
   }
 
   function displayFollowing(user) {
-    return user.followingDisplay || core.formatCompactCount(user.followingCount);
+    return core.formatStatsCount(user, 'following', i18n.localeTag(languagePreference));
   }
 
   function displayFollowers(user) {
-    return user.followersDisplay || core.formatCompactCount(user.followersCount);
+    return core.formatStatsCount(user, 'followers', i18n.localeTag(languagePreference));
   }
 
   function renderCheckbox(user) {
@@ -229,7 +256,7 @@
       } else {
         selected.delete(user.username);
       }
-      render();
+      updateSelectionControls();
     });
     return input;
   }
@@ -342,6 +369,10 @@
     if (!query) {
       return true;
     }
+    let indexed = searchIndex.get(user);
+    if (!indexed) { indexed = {}; searchIndex.set(user, indexed); }
+    const key = includeComments ? 'all' : 'posts';
+    if (indexed[key] !== undefined) return indexed[key].includes(query);
     const postText = (user.observedPosts || [])
       .filter(post => includeComments || post.kind !== "comment")
       .map(post => post.text || "")
@@ -357,6 +388,7 @@
       .filter(Boolean)
       .join(" ")
       .toLowerCase();
+    indexed[key] = haystack;
     return haystack.includes(query);
   }
 
@@ -371,7 +403,7 @@
   function exportSelected() {
     const selectedUsers = users.filter(user => selected.has(user.username));
     const isMarkdown = format.value === "markdown";
-    const text = isMarkdown ? core.exportUsersToMarkdown(selectedUsers) : `\ufeff${core.exportUsersToCsv(selectedUsers)}`;
+    const text = isMarkdown ? core.exportUsersToMarkdown(selectedUsers) : `\ufeff${core.exportUsersToCsv(selectedUsers, { spreadsheetSafe: format.value !== "csv-raw" })}`;
     const filename = `x-users-${new Date().toISOString().slice(0, 10)}.${isMarkdown ? "md" : "csv"}`;
     downloadText(filename, text, isMarkdown ? "text/markdown;charset=utf-8" : "text/csv;charset=utf-8");
   }
@@ -402,45 +434,18 @@
 
   async function importUsersFromFile() {
     const file = importFileInput.files && importFileInput.files[0];
-    importFileInput.value = "";
-    if (!file) {
-      return;
-    }
-    const text = await file.text();
-    const importedUsers = core.parseImportedUsers ? core.parseImportedUsers(text, file.name) : [];
-    if (importedUsers.length === 0) {
-      setStatusMessage(t("managerNoImportUsers"));
-      return;
-    }
-    chrome.storage.local.get(STORAGE_KEY, result => {
-      const cache = result && result[STORAGE_KEY] && typeof result[STORAGE_KEY] === "object" ? { ...result[STORAGE_KEY] } : {};
-      const now = new Date().toISOString();
-      for (const importedUser of importedUsers) {
-        const username = core.normalizeUsername(importedUser.username);
-        if (!username) {
-          continue;
-        }
-        const existing = cache[username] && typeof cache[username] === "object" ? cache[username] : null;
-        const timestamp = importedUser.lastSeenAt || (existing && existing.lastSeenAt) || now;
-        const merged = core.mergeObservedUser(existing, { ...importedUser, username }, timestamp);
-        if (!merged) {
-          continue;
-        }
-        merged.sources = normalizeSources([...(existing && existing.sources ? existing.sources : []), "import"]);
-        if (importedUser.firstSeenAt) {
-          merged.firstSeenAt = importedUser.firstSeenAt;
-        } else if (!existing || !existing.firstSeenAt) {
-          delete merged.firstSeenAt;
-        }
-        if (importedUser.lastSeenAt) {
-          merged.lastSeenAt = importedUser.lastSeenAt;
-        } else if (!existing || !existing.lastSeenAt) {
-          delete merged.lastSeenAt;
-        }
-        cache[username] = merged;
-      }
-      chrome.storage.local.set({ [STORAGE_KEY]: cache }, loadUsers);
-    });
+    importFileInput.value = '';
+    if (!file) return;
+    try {
+      // Capture the clear generation before the asynchronous file read.
+      const snapshot = await storage.request('read');
+      const text = await file.text();
+      const importedUsers = core.parseImportedUsers(text, file.name);
+      if (!importedUsers.length) { setStatusMessage(t('managerNoImportUsers')); return; }
+      await storage.request('import', { generation: snapshot.generation, users: importedUsers });
+      clearStatusMessage();
+      loadUsers();
+    } catch (error) { setStatusMessage(t('storageSaveFailed', error.message)); }
   }
 
   function openSelectedProfiles() {
@@ -469,11 +474,13 @@
 
     sequentialUpdate.running = true;
     sequentialUpdate.cancelRequested = false;
-    let previousDisplaySettings = null;
+    let runLock = null;
+    let updatedCount = 0;
+    let attemptedCount = 0;
     render();
 
     try {
-      previousDisplaySettings = await forceLockListDuringRun();
+      runLock = await acquireRunLock();
       for (let index = 0; index < targetUsers.length; index += 1) {
         if (sequentialUpdate.cancelRequested) {
           break;
@@ -488,6 +495,8 @@
           break;
         }
         const result = await requestProfileStatsUpdate(sequentialUpdate.tabId, user.username, refreshRequestedAt);
+        attemptedCount++;
+        if (result?.ok && result.hasStats) updatedCount++;
         if (result && result.manualStop) {
           sequentialUpdate.cancelRequested = true;
           break;
@@ -496,11 +505,11 @@
           await delay(randomInt(SEQUENTIAL_STEP_PAUSE_MIN_MS, SEQUENTIAL_STEP_PAUSE_MAX_MS));
         }
       }
-      clearStatusMessage();
+      setStatusMessage(t("managerSequentialFinished", updatedCount, attemptedCount));
     } catch (error) {
       setStatusMessage(t("managerSequentialInterrupted", error && error.message ? error.message : "unknown"));
     } finally {
-      await restoreDisplaySettings(previousDisplaySettings);
+      runLock?.release();
       sequentialUpdate.running = false;
       sequentialUpdate.cancelRequested = false;
       sequentialUpdate.tabId = 0;
@@ -555,26 +564,38 @@
     });
   }
 
-  async function forceLockListDuringRun() {
-    const current = await storageGet(DISPLAY_SETTINGS_KEY);
-    const previous = core.normalizeDisplaySettings(current);
-    if (!previous.updateOnlyExisting) {
-      const next = core.normalizeDisplaySettings({ ...current, updateOnlyExisting: true });
-      await storageSet({ [DISPLAY_SETTINGS_KEY]: next });
-    }
-    return previous;
-  }
-
-  async function restoreDisplaySettings(previous) {
-    if (!previous || previous.updateOnlyExisting) {
-      return;
-    }
-    const current = await storageGet(DISPLAY_SETTINGS_KEY);
-    await storageSet({
-      [DISPLAY_SETTINGS_KEY]: core.normalizeDisplaySettings({
-        ...current,
-        updateOnlyExisting: false
-      })
+  function acquireRunLock() {
+    return new Promise((resolve, reject) => {
+      const port = chrome.runtime.connect({ name: 'xfs:sequential-run' });
+      let ready = false, released = false;
+      const heartbeat = setInterval(() => {
+        try { port.postMessage({ type: 'heartbeat' }); }
+        catch { sequentialUpdate.cancelRequested = true; }
+      }, 20000);
+      const timeout = setTimeout(() => { release(); reject(new Error('Unable to acquire account-list lock')); }, 10000);
+      function release() {
+        released = true;
+        clearTimeout(timeout);
+        clearInterval(heartbeat);
+        port.disconnect();
+      }
+      port.onMessage.addListener(message => {
+        if (ready) return;
+        if (!message.ok) { release(); reject(new Error(message.error)); return; }
+        ready = true;
+        clearTimeout(timeout);
+        resolve({ release });
+      });
+      port.onDisconnect.addListener(() => {
+        clearTimeout(timeout);
+        clearInterval(heartbeat);
+        if (!released) {
+          sequentialUpdate.cancelRequested = true;
+          if (!ready) reject(new Error('Account-list lock disconnected'));
+          else setStatusMessage(t('managerSequentialInterrupted', 'Account-list lock disconnected'));
+        }
+      });
+      port.postMessage({ type: 'start', runId: crypto.randomUUID() });
     });
   }
 
@@ -625,13 +646,19 @@
   }
 
   function storageGet(key) {
-    return new Promise(resolve => {
-      chrome.storage.local.get(key, result => resolve(result && result[key]));
+    return new Promise((resolve, reject) => {
+      chrome.storage.local.get(key, result => {
+        const error = chrome.runtime.lastError;
+        if (error) reject(new Error(error.message)); else resolve(result && result[key]);
+      });
     });
   }
 
   function storageSet(values) {
-    return new Promise(resolve => chrome.storage.local.set(values, resolve));
+    return new Promise((resolve, reject) => chrome.storage.local.set(values, () => {
+      const error = chrome.runtime.lastError;
+      if (error) reject(new Error(error.message)); else resolve();
+    }));
   }
 
   function loadLanguagePreference() {

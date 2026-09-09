@@ -256,5 +256,32 @@
   },
   "managerSummary": {
     "message": "$1 users total, $2 current results, $3 selected."
+  },
+  "storageSaveFailed": {
+    "message": "Not saved: $1"
+  },
+  "storageUsage": {
+    "message": "Local storage: $1 MiB / $2 MiB working limit"
+  },
+  "managerPageStatus": {
+    "message": "Page $1 of $2"
+  },
+  "managerPreviousPage": {
+    "message": "Previous page"
+  },
+  "managerNextPage": {
+    "message": "Next page"
+  },
+  "csvSafe": {
+    "message": "CSV (spreadsheet)"
+  },
+  "csvRaw": {
+    "message": "CSV (raw data)"
+  },
+  "managerSequentialFinished": {
+    "message": "Updated and saved $1 of $2 attempted accounts."
+  },
+  "approximateLabel": {
+    "message": "approximate"
   }
 }

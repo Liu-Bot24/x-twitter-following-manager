@@ -5,6 +5,7 @@ import vm from "node:vm";
 const coreSource = await readFile(new URL("../stats-core.js", import.meta.url), "utf8");
 const pageCoreSource = await readFile(new URL("../page-hook-core.js", import.meta.url), "utf8");
 const hookSource = await readFile(new URL("../page-hook.js", import.meta.url), "utf8");
+const storageSource = await readFile(new URL("../storage-client.js", import.meta.url), "utf8");
 const i18nSource = await readFile(new URL("../i18n.js", import.meta.url), "utf8");
 const contentSource = await readFile(new URL("../content.js", import.meta.url), "utf8");
 const manifest = JSON.parse(await readFile(new URL("../manifest.json", import.meta.url), "utf8"));
@@ -60,7 +61,7 @@ FakeXhr.prototype.open = function open() {};
 FakeXhr.prototype.send = function send() {};
 
 const sandbox = {
-  console,
+  console, URL, TextDecoder, setTimeout, clearTimeout,
   XMLHttpRequest: FakeXhr,
   location: { origin: "https://x.com" },
   fetch(input) {
@@ -69,11 +70,8 @@ const sandbox = {
       url,
       headers: { get: () => "application/json" },
       clone() {
-        return this;
-      },
-      json: () => {
         jsonCalls += 1;
-        return Promise.resolve(payload);
+        return new Response(JSON.stringify(payload));
       }
     });
   },
@@ -175,6 +173,7 @@ const isolatedSandbox = {
   },
   chrome: {
     runtime: {
+      sendMessage(message, callback) { callback({ ok: true, cache: {}, generation: 0, runs: {}, status: {} }); },
       onMessage: { addListener() {}, removeListener() {} }
     },
     storage: {
@@ -201,6 +200,7 @@ isolatedSandbox.globalThis = isolatedSandbox;
 vm.createContext(isolatedSandbox);
 const isolatedSources = {
   "stats-core.js": coreSource,
+  "storage-client.js": storageSource,
   "i18n.js": i18nSource,
   "content.js": contentSource
 };

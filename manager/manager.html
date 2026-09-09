@@ -14,6 +14,7 @@
             <h1 data-i18n="shortName">X/Twitter Following Manager</h1>
             <a class="author-link" href="https://blog.liu-qi.cn/index.php/tools/" target="_blank" rel="noreferrer" data-i18n="authorText">Created by @liuqi</a>
           </div>
+          <p id="storage-usage" aria-live="polite"></p>
           <p id="summary" data-i18n="managerSummaryLoading">Loading local captured data...</p>
         </div>
         <div class="toolbar">
@@ -33,7 +34,8 @@
             <option value="import" data-i18n="sourceImport">Import</option>
           </select>
           <select id="format" aria-label="Export format" data-i18n-aria-label="managerExportFormatAria">
-            <option value="csv">CSV</option>
+            <option value="csv" data-i18n="csvSafe">CSV (spreadsheet)</option>
+            <option value="csv-raw" data-i18n="csvRaw">CSV (raw data)</option>
             <option value="markdown">Markdown</option>
           </select>
           <button id="export" type="button" data-i18n="managerExportSelected">Export selected</button>
@@ -87,9 +89,15 @@
           </thead>
           <tbody id="rows"></tbody>
         </table>
+        <nav class="pagination" aria-label="Pages">
+          <button id="previous-page" type="button" data-i18n="managerPreviousPage">Previous page</button>
+          <span id="page-status" aria-live="polite"></span>
+          <button id="next-page" type="button" data-i18n="managerNextPage">Next page</button>
+        </nav>
         <p id="empty" class="empty" hidden data-i18n="managerEmptyState">No users captured yet. Open X, scroll a page, then refresh here.</p>
       </section>
     </main>
+    <script src="../storage-client.js"></script>
     <script src="../i18n.js"></script>
     <script src="../stats-core.js"></script>
     <script src="manager.js"></script>
