@@ -5,6 +5,8 @@
   const DEFAULT_LANGUAGE = "en";
   const MESSAGES = {
     en: {
+      managerIdentityHistory: "Previous identities ($1)",
+      managerExportIdentityHistory: "Export identity history (JSON)",
       approximateLabel: "approximate",
       managerSequentialFinished: "Updated and saved $1 of $2 attempted accounts.",
       storageSaveFailed: "Not saved: $1",
@@ -101,6 +103,8 @@
       tooltipShowComments: "Show accounts captured only from reply lists. Accounts also seen in the Feed or user lists stay visible when this is off."
     },
     zh_CN: {
+      managerIdentityHistory: "历史身份（$1）",
+      managerExportIdentityHistory: "导出完整身份历史（JSON）",
       approximateLabel: "近似值",
       managerSequentialFinished: "已更新并保存 $1 / $2 个已尝试的账号。",
       storageSaveFailed: "未保存：$1",

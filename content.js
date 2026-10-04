@@ -158,7 +158,7 @@
     state.initialized = true;
     if (state.earlyUsers.length > 0) {
       const earlyBatches = state.earlyUsers.splice(0);
-      for (const batch of earlyBatches) if (isCurrentCapture(batch)) storeUsers(batch.users, "pageData");
+      for (const batch of earlyBatches) if (isCurrentCapture(batch)) storeUsers(batch.users, "pageData", batch);
     }
     document.querySelectorAll(".xfs-stats-pill").forEach(pill => pill.remove());
     setupObservers();
@@ -205,7 +205,7 @@
         state.earlyUsers.push(event.data);
         return;
       }
-      storeUsers(event.data.users, "pageData");
+      storeUsers(event.data.users, "pageData", event.data);
     }
   }
 
@@ -662,7 +662,7 @@
     return stats;
   }
 
-  function storeUsers(users, source) {
+  function storeUsers(users, source, capture) {
     if (!Array.isArray(users) || users.length === 0) {
       return;
     }
@@ -673,7 +673,7 @@
       if (!username) {
         continue;
       }
-      if (!shouldRecordUsername(username)) {
+      if (!shouldRecordUsername(username, user.userId)) {
         continue;
       }
       const followingCount = toFiniteNumber(user.followingCount);
@@ -683,7 +683,15 @@
       if ((followingCount === null || followersCount === null) && (!followingDisplay || !followersDisplay)) {
         continue;
       }
-      const statsUpdatedAt = Date.now();
+      const receivedAt = Date.now();
+      const statsUpdatedAt = Number(capture?.requestStartedAt) || receivedAt;
+      const statsCapture = capture ? {
+        documentId: capture.documentId, generation: capture.captureGeneration,
+        startedAt: statsUpdatedAt, sequence: capture.requestSequence
+      } : null;
+      if (source === 'pageData' && core.compareStatsSnapshots(
+        { ...user, statsUpdatedAt, statsCapture }, state.cache.get(username)
+      ) < 0) continue;
       const merged = mergeUserRecord({
         username,
         displayName: typeof user.displayName === "string" ? user.displayName : "",
@@ -699,6 +707,8 @@
         followersDisplay: followersDisplay || core.formatCompactCount(followersCount),
         sources: [],
         statsUpdatedAt,
+        statsReceivedAt: receivedAt,
+        statsCapture,
         statsSource: source === "pageData" ? "network" : source,
         updatedAt: statsUpdatedAt
       }, { scheduleSave: false });
@@ -730,24 +740,32 @@
     if (!username) {
       return null;
     }
-    if (!shouldRecordUsername(username)) {
+    if (!shouldRecordUsername(username, user.userId)) {
       return null;
     }
-    const merged = core.mergeObservedUser(state.cache.get(username), user);
+    let merged = core.mergeObservedUser(state.cache.get(username), user);
+    if (user.userId) {
+      for (const [handle, record] of state.cache) {
+        if (handle === username || record.userId !== user.userId) continue;
+        merged = core.mergeCachedUserRecords(record, merged);
+        state.cache.delete(handle);
+        state.dirtyUsers.delete(handle);
+      }
+    }
     if (!merged) {
       return null;
     }
-    state.cache.set(username, merged);
-    state.dirtyUsers.set(username, merged);
+    state.cache.set(merged.username, merged);
+    state.dirtyUsers.set(merged.username, merged);
     if (options?.scheduleSave !== false) {
       schedulePersist();
     }
     return merged;
   }
 
-  function shouldRecordUsername(username) {
+  function shouldRecordUsername(username, userId) {
     const normalizedUsername = core.normalizeUsername(username);
-    return Boolean(normalizedUsername && ((!state.storageCapacityReached && !state.settings.updateOnlyExisting && Object.keys(state.activeRuns).length === 0) || state.cache.has(normalizedUsername)));
+    return Boolean(normalizedUsername && ((!state.storageCapacityReached && !state.settings.updateOnlyExisting && Object.keys(state.activeRuns).length === 0) || state.cache.has(normalizedUsername) || (userId && [...state.cache.values()].some(record => record.userId === userId))));
   }
 
   function updateVisibleCells(username) {
@@ -1749,10 +1767,7 @@
   function mergeExternalCache(rawCache) {
     if (!rawCache || typeof rawCache !== 'object' || Array.isArray(rawCache)) return;
     const previous = state.cache;
-    state.cache = new Map(Object.entries(rawCache));
-    for (const [username, record] of state.dirtyUsers) {
-      state.cache.set(username, core.mergeCachedUserRecords(state.cache.get(username), record));
-    }
+    state.cache = new Map(Object.entries(core.reconcileUserCaches(Object.fromEntries(state.dirtyUsers), rawCache).cache));
     for (const [username, user] of state.cache) {
       if (core.canonicalStringify(previous.get(username)) !== core.canonicalStringify(user)) updateVisibleCells(username);
     }

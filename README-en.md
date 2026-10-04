@@ -179,3 +179,9 @@ The extension does not require an X API key, does not use a third-party backend,
 - Private, restricted, suspended, or unusual accounts may not expose complete data.
 - If a page was loaded long before the extension started, refreshing the page usually helps capture more data.
 - Sequential refresh depends on what X/Twitter actually renders, so it cannot guarantee every account will be filled.
+
+### Statistics and account identity
+
+Invalid counts such as `unknown` or `n/a` remain missing and can be selected with “Select missing results”; zero is a valid count. Grouped numbers are validated as a whole, so ambiguous or incomplete groups cannot become smaller exact values.
+
+If a handle changes to a different stable user ID, its manager row shows “Previous identities”. Prior profiles and saved posts remain separate and can be inspected and exported as complete JSON. Ordinary CSV/Markdown exports contain the current identity. The history JSON is for inspection and preservation, not re-import. Clearing the cache also clears previous identities, so export any records you need first. A known stable ID changing handle is merged into one current account.
