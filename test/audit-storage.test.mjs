@@ -104,3 +104,68 @@ test('real worker import accepts older valid statistics for a newer empty profil
   assert.equal((await s.request('import', { generation: 0, users: rows })).ok, true);
   assert.equal(s.data()[CACHE].alice.followingCount, 12); assert.equal(s.data()[CACHE].alice.statsUpdatedAt, yesterday);
 });
+
+test('R5: old CSV imports preserve the earliest and latest observations', async () => {
+  const s = service();
+  const existing = s.core.mergeObservedUser(null, { username: 'alice' }, '2026-09-01T00:00:00Z');
+  existing.lastSeenAt = '2026-10-01T00:00:00Z';
+  await s.request('merge', { generation: 0, users: [existing] });
+  const users = s.core.parseImportedUsers('profile_url,first_seen_at,last_seen_at\nhttps://x.com/alice,2026-09-15T00:00:00Z,2026-09-20T00:00:00Z\n', 'old.csv');
+  assert.equal((await s.request('import', { generation: 0, users })).ok, true);
+  assert.equal(Date.parse(s.data()[CACHE].alice.firstSeenAt), Date.parse('2026-09-01T00:00:00Z'));
+  assert.equal(Date.parse(s.data()[CACHE].alice.lastSeenAt), Date.parse('2026-10-01T00:00:00Z'));
+});
+
+test('R3/R4: worker restart and stale tabs preserve identity archives and request ordering', async () => {
+  const s = service(), core = s.core;
+  const old = core.mergeObservedUser(null, { username: 'alice', userId: '111', sources: ['feed'], observedPost: { id: '777', text: 'Old owner' } }, '2026-09-01T00:00:00Z');
+  const current = core.mergeObservedUser(null, { username: 'alice', userId: '222', displayName: 'New owner', sources: ['userList'], followingCount: 10, followersCount: 50, statsUpdatedAt: 1790812800000, statsCapture: { documentId: 'd', generation: 0, startedAt: 1790812800000, sequence: 2 } }, '2026-10-01T00:00:00Z');
+  for (const users of [[old], [current], [old]]) assert.equal((await s.request('merge', { generation: 0, users })).ok, true);
+  const restarted = service(s.data());
+  const late = { ...current, followersCount: 100, statsCapture: { ...current.statsCapture, sequence: 1 }, updatedAt: Date.now() };
+  await restarted.request('merge', { generation: 0, users: [late, old] });
+  const result = restarted.data()[CACHE].alice;
+  assert.equal(result.userId, '222'); assert.equal(result.followersCount, 50);
+  assert.equal(result.observedPosts.length, 0);
+  assert.equal(result.identityHistory.length, 1);
+  assert.equal(result.identityHistory[0].observedPosts[0].text, 'Old owner');
+  assert.equal(result.statsCapture.sequence, 2);
+  const renamed = core.mergeObservedUser(null, { username: 'new_alice', userId: '222', sources: ['feed'] }, '2026-10-02T00:00:00Z');
+  await restarted.request('merge', { generation: 0, users: [renamed] });
+  await restarted.request('merge', { generation: 0, users: [current] });
+  assert.deepEqual(Object.keys(restarted.data()[CACHE]), ['new_alice']);
+  assert.equal(restarted.data()[CACHE].new_alice.identityHistory[0].userId, '111');
+});
+
+test('R5: history ranges are commutative and idempotent for old/new/missing/invalid dates', async () => {
+  const older = { username: 'alice', userId: '111', firstSeenAt: '2026-09-01T00:00:00Z', lastSeenAt: '2026-09-20T00:00:00Z' };
+  const newer = { username: 'alice', userId: '111', firstSeenAt: '2026-09-15T00:00:00Z', lastSeenAt: '2026-10-01T00:00:00Z' };
+  for (const action of ['merge', 'import']) {
+    for (const records of [[older, newer, older], [newer, older, newer]]) {
+      const s = service();
+      for (const record of records) assert.equal((await s.request(action, { generation: 0, users: [record] })).ok, true);
+      const result = s.data()[CACHE].alice;
+      assert.equal(Date.parse(result.firstSeenAt), Date.parse(older.firstSeenAt));
+      assert.equal(Date.parse(result.lastSeenAt), Date.parse(newer.lastSeenAt));
+    }
+  }
+  const s = service();
+  for (const dates of [{}, { firstSeenAt: 'invalid', lastSeenAt: 'not a date' }]) {
+    assert.equal((await s.request('import', { generation: 0, users: [{ username: 'alice', ...dates }] })).ok, true);
+    const result = s.data()[CACHE].alice;
+    assert.ok(Number.isFinite(Date.parse(result.firstSeenAt)));
+    assert.ok(Number.isFinite(Date.parse(result.lastSeenAt)));
+    assert.ok(Date.parse(result.firstSeenAt) <= Date.parse(result.lastSeenAt));
+  }
+});
+
+test('R3: locking the account list still permits a known stable ID to change handle', async () => {
+  const s = service({ 'xfs:displaySettingsV1': { updateOnlyExisting: true } });
+  const old = s.core.mergeObservedUser(null, { username: 'alice', userId: '111', sources: ['feed'] }, '2026-09-01T00:00:00Z');
+  await s.request('import', { generation: 0, users: [old] });
+  const renamed = s.core.mergeObservedUser(null, { username: 'new_alice', userId: '111', sources: ['feed'] }, '2026-10-02T00:00:00Z');
+  const result = await s.request('merge', { generation: 0, users: [renamed, { username: 'stranger', userId: '222' }] });
+  assert.equal(result.ok, true);
+  assert.deepEqual(Array.from(result.rejectedUsernames), ['stranger']);
+  assert.deepEqual(Object.keys(s.data()[CACHE]), ['new_alice']);
+});

@@ -148,7 +148,7 @@
       users = Object.values(result.cache)
         .filter(user => user && core.normalizeUsername(user.username))
         .map(normalizeStoredUser)
-        .filter(user => user.sources.length > 0 || core.userHasCommentSource(user));
+        .filter(user => user.sources.length > 0 || core.userHasCommentSource(user) || user.identityHistory?.length);
       document.getElementById('storage-usage').textContent = t('storageUsage', (result.bytesUsed / 1048576).toFixed(2), (result.budgetBytes / 1048576).toFixed(0));
       if (result.status.error) setStatusMessage(t('storageSaveFailed', result.status.error));
       pruneSelection();
@@ -225,7 +225,7 @@
   }
 
   function hasCompleteStats(user) {
-    return Boolean(displayFollowing(user) && displayFollowers(user));
+    return core.hasCompleteStatsRecord(user);
   }
 
   function pruneSelection() {
@@ -265,7 +265,7 @@
     const wrapper = document.createElement("div");
     wrapper.className = "user-identity";
     const link = document.createElement("a");
-    link.href = user.profileUrl || `https://x.com/${user.username}`;
+    link.href = core.profileUrlForUser(user);
     link.target = "_blank";
     link.rel = "noreferrer";
     link.textContent = user.displayName || `@${user.username}`;
@@ -275,6 +275,24 @@
     wrapper.appendChild(link);
     if (user.displayName || user.userId) {
       wrapper.appendChild(handle);
+    }
+    if (user.identityHistory?.length) {
+      const details = document.createElement('details');
+      const summary = document.createElement('summary');
+      summary.textContent = t('managerIdentityHistory', user.identityHistory.length);
+      details.appendChild(summary);
+      for (const archived of user.identityHistory) {
+        const label = document.createElement('div');
+        label.textContent = `${archived.displayName || '@' + archived.username} · ${archived.userId}`;
+        details.appendChild(label);
+      }
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = t('managerExportIdentityHistory');
+      button.addEventListener('click', () => downloadText(`x-identity-history-${user.username}.json`,
+        JSON.stringify(user.identityHistory, null, 2), 'application/json;charset=utf-8'));
+      details.appendChild(button);
+      wrapper.appendChild(details);
     }
     return wrapper;
   }
@@ -339,10 +357,10 @@
     const content = document.createElement("span");
     content.className = "post-summary-content";
     content.appendChild(document.createTextNode(truncate(post.text || post.url, 96)));
-    if (post.url) {
+    if (core.safePostUrl(post.url)) {
       content.appendChild(document.createTextNode(" "));
       const link = document.createElement("a");
-      link.href = post.url;
+      link.href = core.safePostUrl(post.url);
       link.target = "_blank";
       link.rel = "noreferrer";
       link.textContent = t("managerOpenLink");
@@ -451,7 +469,7 @@
   function openSelectedProfiles() {
     const selectedUsers = users.filter(user => selected.has(user.username));
     for (const user of selectedUsers) {
-      const profileUrl = user.profileUrl || `https://x.com/${user.username}`;
+      const profileUrl = core.profileUrlForUser(user);
       if (!profileUrl) {
         continue;
       }
@@ -518,7 +536,7 @@
   }
 
   function profileUrlForUser(user) {
-    return user && (user.profileUrl || (user.username ? `https://x.com/${user.username}` : ""));
+    return core.profileUrlForUser(user);
   }
 
   async function openOrNavigateSequentialTab(url) {

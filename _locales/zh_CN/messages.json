@@ -1,4 +1,6 @@
 {
+  "managerIdentityHistory": { "message": "历史身份（$1）" },
+  "managerExportIdentityHistory": { "message": "导出完整身份历史（JSON）" },
   "extensionName": {
     "message": "X/Twitter 关注管理器 - 直接显示粉丝数，管理并导出名单",
     "description": "Chrome 应用商店标题和扩展名称。"

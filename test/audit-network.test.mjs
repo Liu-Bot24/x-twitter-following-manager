@@ -78,3 +78,21 @@ test('clear invalidates XHR and a Fetch body already being read, while native da
   xhr.defer = false; xhr.send();
   assert.equal(h.messages.filter(m => m.type === 'users').length, 1);
 });
+
+test('R4: delayed Fetch clone parsing retains its original sequence and document identity', async () => {
+  let release;
+  const body = new ReadableStream({ start(controller) { release = () => { controller.enqueue(new TextEncoder().encode(JSON.stringify(payload))); controller.close(); }; } });
+  const first = new Response(body, { headers: { 'content-type': 'application/json' } });
+  const second = new Response(JSON.stringify(payload), { headers: { 'content-type': 'application/json' } });
+  let clone = 0;
+  const h = hook({ headers: new Headers({ 'content-type': 'application/json' }), clone() { return clone++ === 0 ? first : second; } });
+  vm.runInContext('Date.now = () => 123456789', h.context);
+  await h.context.fetch('https://x.com/i/api/graphql/First');
+  await h.context.fetch('https://x.com/i/api/graphql/Second');
+  await wait(); release(); await wait();
+  const messages = h.messages.filter(message => message.type === 'users');
+  assert.deepEqual(messages.map(message => message.requestSequence), [2, 1]);
+  assert.equal(messages[0].requestStartedAt, messages[1].requestStartedAt);
+  assert.equal(messages[0].documentId, messages[1].documentId);
+  assert.ok(messages[0].documentId);
+});
