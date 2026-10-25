@@ -74,10 +74,301 @@
 
   function normalizeDisplaySettings(value) {
     const source = value && typeof value === "object" ? value : {};
+    const convertTzOffset = toValidTzOffset(source.convertTzOffset, -7);
+    const targetDiffTzOffset = toValidTzOffset(source.targetDiffTzOffset, 12);
+    const targetDiffTime = normalizeDateTimeString(
+      source.targetDiffTime,
+      defaultDateTimeInOffset(targetDiffTzOffset)
+    );
     return {
       feed: source.feed !== false,
       userList: source.userList !== false,
-      updateOnlyExisting: source.updateOnlyExisting === true
+      updateOnlyExisting: source.updateOnlyExisting === true,
+      convertTzEnabled: source.convertTzEnabled === true,
+      convertTzOffset,
+      targetDiffEnabled: source.targetDiffEnabled === true,
+      targetDiffTzOffset,
+      targetDiffTime
+    };
+  }
+
+  function defaultDateTimeInOffset(offsetHours) {
+    const wall = toOffsetWallDate(Date.now(), offsetHours);
+    if (!wall) {
+      return "2026-10-25T14:00";
+    }
+    const y = wall.getUTCFullYear();
+    const m = String(wall.getUTCMonth() + 1).padStart(2, "0");
+    const d = String(wall.getUTCDate()).padStart(2, "0");
+    return `${y}-${m}-${d}T14:00`;
+  }
+
+  function toValidTzOffset(value, fallback) {
+    const parsed = toFiniteNumber(value);
+    if (parsed === null) {
+      return fallback;
+    }
+    const rounded = Math.round(parsed);
+    if (rounded < -12 || rounded > 14) {
+      return fallback;
+    }
+    return rounded;
+  }
+
+  function normalizeDateTimeString(value, fallback) {
+    if (typeof value !== "string") {
+      return fallback;
+    }
+    const trimmed = value.trim();
+    if (trimmed === "") {
+      return "";
+    }
+    const fullMatch = trimmed.match(/^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])[T\s]([01]?\d|2[0-3]):([0-5]\d)$/);
+    if (fullMatch) {
+      return `${fullMatch[1]}-${fullMatch[2]}-${fullMatch[3]}T${String(Number(fullMatch[4])).padStart(2, "0")}:${fullMatch[5]}`;
+    }
+    const timeOnlyMatch = trimmed.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
+    if (timeOnlyMatch) {
+      const datePrefix = String(fallback || "2026-10-25T14:00").split("T")[0];
+      return `${datePrefix}T${String(Number(timeOnlyMatch[1])).padStart(2, "0")}:${timeOnlyMatch[2]}`;
+    }
+    return fallback;
+  }
+
+  function normalizeTimeString(value, fallback) {
+    return normalizeDateTimeString(value, fallback);
+  }
+
+  function formatUtcOffsetLabel(offsetHours) {
+    const offset = toValidTzOffset(offsetHours, 0);
+    if (offset === 0) {
+      return "UTC+0";
+    }
+    return offset > 0 ? `UTC+${offset}` : `UTC${offset}`;
+  }
+
+  const TIMEZONE_CITIES = {
+    zh: {
+      "-12": "贝克岛",
+      "-11": "帕果帕果 / 美属萨摩亚",
+      "-10": "檀香山 / 夏威夷",
+      "-9": "安克雷奇(标准时)",
+      "-8": "洛杉矶 / 温哥华(标准时)",
+      "-7": "旧金山(夏令时) / 丹佛(标准时)",
+      "-6": "芝加哥(标准时) / 墨西哥城",
+      "-5": "纽约 / 多伦多(标准时)",
+      "-4": "纽约(夏令时) / 圣地亚哥(标准时)",
+      "-3": "圣保罗 / 布宜诺斯艾利斯",
+      "-2": "费尔南多-迪诺罗尼亚",
+      "-1": "亚速尔群岛(标准时)",
+      "0": "伦敦(标准时) / UTC",
+      "1": "柏林 / 巴黎(标准时) / 伦敦(夏令时)",
+      "2": "开罗 / 雅典(标准时) / 柏林(夏令时)",
+      "3": "莫斯科 / 利雅得",
+      "4": "迪拜 / 巴库",
+      "5": "卡拉奇 / 塔什干 / 阿拉木图",
+      "6": "达卡",
+      "7": "曼谷 / 雅加达",
+      "8": "北京 / 新加坡 / 台北",
+      "9": "东京 / 首尔",
+      "10": "悉尼 / 墨尔本(标准时)",
+      "11": "所罗门群岛 / 悉尼(夏令时)",
+      "12": "奥克兰(标准时) / 斐济",
+      "13": "奥克兰(夏令时) / 努库阿洛法 / 萨摩亚",
+      "14": "圣诞岛 (基里巴斯)"
+    },
+    en: {
+      "-12": "Baker Island",
+      "-11": "Pago Pago / American Samoa",
+      "-10": "Honolulu / Hawaii",
+      "-9": "Anchorage (standard)",
+      "-8": "Los Angeles / Vancouver (standard)",
+      "-7": "San Francisco (PDT) / Denver (standard)",
+      "-6": "Chicago (standard) / Mexico City",
+      "-5": "New York / Toronto (standard)",
+      "-4": "New York (EDT) / Santiago (standard)",
+      "-3": "São Paulo / Buenos Aires",
+      "-2": "Fernando de Noronha",
+      "-1": "Azores (standard)",
+      "0": "London (standard) / UTC",
+      "1": "Berlin / Paris (standard) / London (BST)",
+      "2": "Cairo / Athens (standard) / Berlin (CEST)",
+      "3": "Moscow / Riyadh",
+      "4": "Dubai / Baku",
+      "5": "Karachi / Tashkent / Almaty",
+      "6": "Dhaka",
+      "7": "Bangkok / Jakarta",
+      "8": "Beijing / Singapore / Taipei",
+      "9": "Tokyo / Seoul",
+      "10": "Sydney / Melbourne (standard)",
+      "11": "Solomon Is. / Sydney (AEDT)",
+      "12": "Auckland (standard) / Fiji",
+      "13": "Auckland (NZDT) / Tonga / Samoa",
+      "14": "Kiritimati"
+    }
+  };
+
+  function formatUtcOffsetOptionLabel(offsetHours, locale) {
+    const offset = toValidTzOffset(offsetHours, 0);
+    const utcLabel = formatUtcOffsetLabel(offset);
+    const isZh = String(locale || "").toLowerCase().startsWith("zh");
+    const table = isZh ? TIMEZONE_CITIES.zh : TIMEZONE_CITIES.en;
+    const city = table[String(offset)];
+    return city ? `${utcLabel} (${city})` : utcLabel;
+  }
+
+  function toOffsetWallDate(timestampMs, offsetHours) {
+    const ms = toFiniteNumber(timestampMs);
+    if (ms === null) {
+      return null;
+    }
+    const offset = toValidTzOffset(offsetHours, 0);
+    return new Date(ms + offset * 3600 * 1000);
+  }
+
+  function formatTimestampInOffset(timestampMs, offsetHours, locale) {
+    const wall = toOffsetWallDate(timestampMs, offsetHours);
+    if (!wall) {
+      return "";
+    }
+    const isZh = String(locale || "").toLowerCase().startsWith("zh");
+    const year = wall.getUTCFullYear();
+    const month = wall.getUTCMonth() + 1;
+    const day = wall.getUTCDate();
+    const hours24 = wall.getUTCHours();
+    const minutes = String(wall.getUTCMinutes()).padStart(2, "0");
+    const isPM = hours24 >= 12;
+    const hours12 = hours24 % 12 || 12;
+    if (isZh) {
+      const ampm = isPM ? "下午" : "上午";
+      return `${ampm}${hours12}:${minutes} · ${year}年${month}月${day}日`;
+    }
+    const ampm = isPM ? "PM" : "AM";
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    return `${hours12}:${minutes} ${ampm} · ${monthNames[month - 1]} ${day}, ${year}`;
+  }
+
+  function formatShortClockInOffset(timestampMs, offsetHours, locale) {
+    const wall = toOffsetWallDate(timestampMs, offsetHours);
+    if (!wall) {
+      return { clock: "--:--", date: "" };
+    }
+    const isZh = String(locale || "").toLowerCase().startsWith("zh");
+    const month = wall.getUTCMonth() + 1;
+    const day = wall.getUTCDate();
+    const hours24 = wall.getUTCHours();
+    const minutes = String(wall.getUTCMinutes()).padStart(2, "0");
+    const isPM = hours24 >= 12;
+    const hours12 = hours24 % 12 || 12;
+    if (isZh) {
+      return {
+        clock: `${isPM ? "下午" : "上午"}${hours12}:${minutes}`,
+        date: `${month}月${day}日`
+      };
+    }
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    return {
+      clock: `${hours12}:${minutes} ${isPM ? "PM" : "AM"}`,
+      date: `${monthNames[month - 1]} ${day}`
+    };
+  }
+
+  function computeTargetMomentDiff(timestampMs, targetTzOffset, targetDateTimeStr, locale) {
+    const ms = toFiniteNumber(timestampMs);
+    const offset = toValidTzOffset(targetTzOffset, 0);
+    const normalizedDateTime = normalizeDateTimeString(targetDateTimeStr, "");
+    if (ms === null || !normalizedDateTime) {
+      return null;
+    }
+    const [datePart, timePart] = normalizedDateTime.split("T");
+    const [targetYear, targetMonth, targetDay] = datePart.split("-").map(Number);
+    const [targetHour, targetMinute] = timePart.split(":").map(Number);
+    const targetUtcMs = Date.UTC(
+      targetYear,
+      targetMonth - 1,
+      targetDay,
+      targetHour,
+      targetMinute,
+      0
+    ) - offset * 3600 * 1000;
+
+    const diffMinutes = Math.round((targetUtcMs - ms) / 60000);
+    const sign = diffMinutes > 0 ? "+" : diffMinutes < 0 ? "-" : "";
+    const absMinutes = Math.abs(diffMinutes);
+    const days = Math.floor(absMinutes / 1440);
+    const hours = Math.floor((absMinutes % 1440) / 60);
+    const totalHours = Math.floor(absMinutes / 60);
+    const minutes = absMinutes % 60;
+    const isZh = String(locale || "").toLowerCase().startsWith("zh");
+    let text;
+    if (isZh) {
+      if (absMinutes === 0) {
+        text = "0小时";
+      } else if (days >= 2) {
+        text = hours === 0
+          ? `${sign}${days}天`
+          : `${sign}${days}天${hours}小时`;
+      } else if (minutes === 0) {
+        text = `${sign}${totalHours}小时`;
+      } else if (totalHours === 0) {
+        text = `${sign}${minutes}分钟`;
+      } else {
+        text = `${sign}${totalHours}小时${minutes}分`;
+      }
+    } else {
+      if (absMinutes === 0) {
+        text = "0h";
+      } else if (days >= 2) {
+        text = hours === 0
+          ? `${sign}${days}d`
+          : `${sign}${days}d ${hours}h`;
+      } else if (minutes === 0) {
+        text = `${sign}${totalHours}h`;
+      } else if (totalHours === 0) {
+        text = `${sign}${minutes}m`;
+      } else {
+        text = `${sign}${totalHours}h ${minutes}m`;
+      }
+    }
+    return {
+      diffMinutes,
+      sign,
+      text
+    };
+  }
+
+  function buildTimestampHoverParts(timestampMs, settings, locale) {
+    const normalized = normalizeDisplaySettings(settings);
+    const ms = toFiniteNumber(timestampMs);
+    if (ms === null) {
+      return { convertedText: "", diffText: "", diffMinutes: 0 };
+    }
+    let convertedText = "";
+    if (normalized.convertTzEnabled) {
+      const tzLabel = formatUtcOffsetLabel(normalized.convertTzOffset);
+      const formatted = formatTimestampInOffset(ms, normalized.convertTzOffset, locale);
+      if (formatted) {
+        convertedText = `${tzLabel} ${formatted}`;
+      }
+    }
+    let diffText = "";
+    let diffMinutes = 0;
+    if (normalized.targetDiffEnabled && normalized.targetDiffTime) {
+      const diff = computeTargetMomentDiff(
+        ms,
+        normalized.targetDiffTzOffset,
+        normalized.targetDiffTime,
+        locale
+      );
+      if (diff) {
+        diffText = diff.text;
+        diffMinutes = diff.diffMinutes;
+      }
+    }
+    return {
+      convertedText,
+      diffText,
+      diffMinutes
     };
   }
 
@@ -1268,14 +1559,20 @@
 
   global.XFollowStatsCore = {
     SOURCE,
+    buildTimestampHoverParts,
     canonicalStringify,
     collectUserStats,
     classifyStatsSurface,
+    computeTargetMomentDiff,
     exportUsersToCsv,
     exportUsersToMarkdown,
     findNameLinkInAnchors,
     formatCompactCount,
+    formatShortClockInOffset,
     formatStatsCount,
+    formatTimestampInOffset,
+    formatUtcOffsetLabel,
+    formatUtcOffsetOptionLabel,
     isStatsAllowedPath,
     isCachedStatsFresh,
     mergeCachedUserRecords,
@@ -1285,6 +1582,7 @@
     normalizePostSource,
     normalizeSource,
     normalizeText,
+    normalizeTimeString,
     normalizeUsername,
     parseImportedUsers,
     parseStatsText,

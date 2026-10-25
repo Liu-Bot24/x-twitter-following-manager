@@ -47,6 +47,37 @@
           <input id="lock-list-toggle" type="checkbox">
           <i aria-hidden="true"></i>
         </label>
+        <div class="settings-divider" aria-hidden="true"></div>
+        <label class="switch-row">
+          <span data-i18n="popupTzConvertLabel">Timezone convert</span>
+          <input id="tz-convert-toggle" type="checkbox">
+          <i aria-hidden="true"></i>
+        </label>
+        <div id="tz-convert-panel" class="sub-panel" hidden>
+          <div class="tz-convert-row">
+            <select id="tz-convert-select" class="tz-select" aria-label="Target timezone"></select>
+            <div class="tz-readout-box">
+              <span id="tz-now-date" class="tz-now-date"></span>
+              <strong id="tz-now-clock" class="tz-now-clock">--:--</strong>
+            </div>
+          </div>
+        </div>
+        <label class="switch-row">
+          <span data-i18n="popupTargetDiffLabel">Target time diff</span>
+          <input id="target-diff-toggle" type="checkbox">
+          <i aria-hidden="true"></i>
+        </label>
+        <div id="target-diff-panel" class="sub-panel" hidden>
+          <div class="target-diff-inputs">
+            <select id="target-diff-tz-select" class="tz-select" aria-label="Reference timezone"></select>
+            <input id="target-diff-time-input" class="tz-time-input" type="datetime-local" aria-label="Reference date and time">
+          </div>
+          <div class="target-diff-readout">
+            <span data-i18n="popupTargetDiffNowLabel">Diff from now</span>
+            <strong id="target-diff-now-value">--</strong>
+          </div>
+        </div>
+        <p id="tz-offset-hint" class="hint" data-i18n="popupFixedOffsetHint" hidden>Fixed UTC offsets; daylight saving time is not adjusted automatically.</p>
       </section>
       <div class="actions">
         <button id="open-manager" type="button" data-i18n="popupOpenManager">Open manager</button>
@@ -56,6 +87,7 @@
       <p id="storage-usage" class="hint" aria-live="polite"></p>
       <p class="hint" data-i18n="popupHint">The extension automatically chooses an available way to read counts.</p>
     </main>
+    <script src="../stats-core.js"></script>
     <script src="../storage-client.js"></script>
     <script src="../i18n.js"></script>
     <script src="popup.js"></script>

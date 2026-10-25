@@ -800,3 +800,66 @@ assert.deepEqual(
   []
 );
 assert.equal(manifest.web_accessible_resources, undefined);
+
+// Timezone conversion & target moment diff tests
+assert.equal(defaultSettings.convertTzEnabled, false);
+assert.equal(defaultSettings.convertTzOffset, -7);
+assert.equal(defaultSettings.targetDiffEnabled, false);
+assert.equal(defaultSettings.targetDiffTzOffset, 12);
+assert.match(defaultSettings.targetDiffTime, /^\d{4}-\d{2}-\d{2}T14:00$/);
+
+const customTzSettings = core.normalizeDisplaySettings({
+  convertTzEnabled: true,
+  convertTzOffset: -7,
+  targetDiffEnabled: true,
+  targetDiffTzOffset: 12,
+  targetDiffTime: "2026-10-25T14:00"
+});
+assert.equal(customTzSettings.convertTzEnabled, true);
+assert.equal(customTzSettings.convertTzOffset, -7);
+assert.equal(customTzSettings.targetDiffEnabled, true);
+assert.equal(customTzSettings.targetDiffTzOffset, 12);
+assert.equal(customTzSettings.targetDiffTime, "2026-10-25T14:00");
+
+// 2026-10-25 03:21:00 UTC+8 === 2026-10-24T19:21:00.000Z
+const sampleTweetMs = Date.parse("2026-10-24T19:21:00.000Z");
+assert.equal(
+  core.formatTimestampInOffset(sampleTweetMs, -7, "zh-CN"),
+  "下午12:21 · 2026年10月24日"
+);
+assert.equal(
+  core.formatTimestampInOffset(sampleTweetMs, -7, "en"),
+  "12:21 PM · Oct 24, 2026"
+);
+
+// In UTC+12, sampleTweetMs is 2026-10-25 07:21.
+// Target 2026-10-25T14:00 in UTC+12 is AFTER 07:21 (+6h 39m) -> positive
+const diffAfter = core.computeTargetMomentDiff(sampleTweetMs, 12, "2026-10-25T14:00", "zh-CN");
+assert.equal(diffAfter.diffMinutes, 399);
+assert.equal(diffAfter.text, "+6小时39分");
+
+// Target 2026-10-25T05:21 in UTC+12 is BEFORE 07:21 (-2h) -> negative
+const diffBefore = core.computeTargetMomentDiff(sampleTweetMs, 12, "2026-10-25T05:21", "zh-CN");
+assert.equal(diffBefore.diffMinutes, -120);
+assert.equal(diffBefore.text, "-2小时");
+
+const hoverBoth = core.buildTimestampHoverParts(sampleTweetMs, customTzSettings, "zh-CN");
+assert.equal(hoverBoth.convertedText, "UTC-7 下午12:21 · 2026年10月24日");
+assert.equal(hoverBoth.diffText, "+6小时39分");
+
+const hoverOnlyTz = core.buildTimestampHoverParts(
+  sampleTweetMs,
+  { ...customTzSettings, targetDiffEnabled: false },
+  "zh-CN"
+);
+assert.equal(hoverOnlyTz.convertedText, "UTC-7 下午12:21 · 2026年10月24日");
+assert.equal(hoverOnlyTz.diffText, "");
+
+assert.match(popupHtml, /id="tz-convert-toggle"/);
+assert.match(popupHtml, /id="target-diff-toggle"/);
+assert.match(contentCss, /\.xfs-time-tooltip-tz/);
+assert.match(contentCss, /\.xfs-time-tooltip-diff/);
+assert.match(contentSource, /refreshTimestampTooltips/);
+assert.equal(core.formatUtcOffsetOptionLabel(-8, "zh-CN"), "UTC-8 (洛杉矶 / 温哥华(标准时))");
+assert.equal(core.formatUtcOffsetOptionLabel(8, "zh-CN"), "UTC+8 (北京 / 新加坡 / 台北)");
+assert.equal(core.formatUtcOffsetOptionLabel(-5, "en"), "UTC-5 (New York / Toronto (standard))");

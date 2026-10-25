@@ -80,6 +80,8 @@
     startedAt: Date.now(),
     statsFromApi: 0,
     statsFromHover: 0,
+    hoveredTimestampMs: 0,
+    hoveredTimestampElement: null,
     userActivityVersion: 0
   };
 
@@ -138,6 +140,7 @@
       state.settings = core.normalizeDisplaySettings(message.settings);
       chrome.storage.local.set({ [SETTINGS_KEY]: state.settings });
       removeDisabledPills();
+      refreshTimestampTooltips();
       scanStatsSurfaces({ forceFallback: false });
       sendResponse({ ok: true, status: getStatus() });
       return false;
@@ -147,6 +150,7 @@
         ? i18n.normalizeLanguage(message.languagePreference) || null
         : null;
       refreshPillLanguage();
+      refreshTimestampTooltips();
       sendResponse({ ok: true, status: getStatus() });
       return false;
     }
@@ -161,6 +165,7 @@
       for (const batch of earlyBatches) if (isCurrentCapture(batch)) storeUsers(batch.users, "pageData");
     }
     document.querySelectorAll(".xfs-stats-pill").forEach(pill => pill.remove());
+    clearTimestampTooltips();
     setupObservers();
     scheduleScan(0);
   }).catch(recordPersistError);
@@ -182,6 +187,7 @@
     if (state.intersectionObserver) {
       state.intersectionObserver.disconnect();
     }
+    clearTimestampTooltips();
     state.cleanupCallbacks.forEach(callback => callback());
     state.cleanupCallbacks.length = 0;
     if (window.__xFollowStatsContentCleanup === cleanup) {
@@ -239,6 +245,7 @@
       if (changes[SETTINGS_KEY]) {
         state.settings = core.normalizeDisplaySettings(changes[SETTINGS_KEY].newValue);
         removeDisabledPills();
+        refreshTimestampTooltips();
         scheduleScan(0);
       }
       if (changes[LANGUAGE_KEY]) {
@@ -246,6 +253,7 @@
           ? i18n.normalizeLanguage(changes[LANGUAGE_KEY].newValue) || null
           : null;
         refreshPillLanguage();
+        refreshTimestampTooltips();
       }
     };
     chrome.storage.onChanged.addListener(storageListener);
@@ -256,15 +264,19 @@
   function setupObservers() {
     state.mutationObserver = new MutationObserver(records => {
       pruneSilentCards();
+      if (state.hoveredTimestampMs) {
+        refreshTimestampTooltips();
+      }
       for (const cell of state.observedCells) if (!document.contains(cell)) unregisterCell(cell);
-      const owned = node => node.nodeType === 1 && node.matches('.xfs-stats-pill, .xfs-userlist-anchor');
-      if (records.some(record => !record.target.parentElement?.closest('.xfs-stats-pill, .xfs-userlist-anchor')
+      const owned = node => node.nodeType === 1 && node.matches('.xfs-stats-pill, .xfs-userlist-anchor, .xfs-time-tooltip-extra');
+      if (records.some(record => !record.target.parentElement?.closest('.xfs-stats-pill, .xfs-userlist-anchor, .xfs-time-tooltip-extra')
         && !owned(record.target)
         && (record.type !== 'childList' || [...record.addedNodes, ...record.removedNodes].some(node => !owned(node))))) {
         scheduleScan(SCAN_DEBOUNCE_MS);
       }
     });
     observeDocument();
+    setupTimestampHoverListeners();
 
     state.intersectionObserver = new IntersectionObserver(
       entries => {
@@ -319,6 +331,158 @@
       return;
     }
     setTimeout(observeDocument, 50);
+  }
+
+  function setupTimestampHoverListeners() {
+    const onPointerOver = event => {
+      const target = event.target;
+      if (!target || typeof target.closest !== "function") {
+        return;
+      }
+      const timeEl = findTimestampElement(target);
+      if (!timeEl) {
+        return;
+      }
+      const dt = timeEl.getAttribute("datetime") || timeEl.dateTime || "";
+      const parsedMs = Date.parse(dt);
+      if (!Number.isFinite(parsedMs)) {
+        return;
+      }
+      state.hoveredTimestampElement = timeEl;
+      state.hoveredTimestampMs = parsedMs;
+      refreshTimestampTooltips();
+    };
+
+    const onPointerOut = event => {
+      if (!state.hoveredTimestampElement) {
+        return;
+      }
+      const related = event.relatedTarget;
+      if (related && typeof related.closest === "function" && findTimestampElement(related) === state.hoveredTimestampElement) {
+        return;
+      }
+      state.hoveredTimestampElement = null;
+      state.hoveredTimestampMs = 0;
+    };
+
+    document.addEventListener("pointerover", onPointerOver, { capture: true, passive: true });
+    document.addEventListener("mouseover", onPointerOver, { capture: true, passive: true });
+    document.addEventListener("pointerout", onPointerOut, { capture: true, passive: true });
+    state.cleanupCallbacks.push(() => {
+      document.removeEventListener("pointerover", onPointerOver, true);
+      document.removeEventListener("mouseover", onPointerOver, true);
+      document.removeEventListener("pointerout", onPointerOut, true);
+    });
+  }
+
+  function findTimestampElement(node) {
+    const directTime = node.closest("time[datetime]");
+    if (directTime) {
+      return directTime;
+    }
+    const link = node.closest("a[href]");
+    if (link) {
+      const innerTime = link.querySelector("time[datetime]");
+      if (innerTime) {
+        return innerTime;
+      }
+    }
+    return null;
+  }
+
+  function clearTimestampTooltips() {
+    document.querySelectorAll(".xfs-time-tooltip-extra").forEach(extra => extra.remove());
+    document.querySelectorAll("[data-xfs-time-tooltip]").forEach(tooltip => tooltip.removeAttribute("data-xfs-time-tooltip"));
+  }
+
+  function refreshTimestampTooltips() {
+    const tooltips = document.querySelectorAll('[role="tooltip"]');
+    if (!state.settings.convertTzEnabled && !state.settings.targetDiffEnabled) {
+      clearTimestampTooltips();
+      return;
+    }
+    if (!state.hoveredTimestampMs || !core.buildTimestampHoverParts) {
+      return;
+    }
+    const locale = i18n && i18n.localeTag ? i18n.localeTag(state.languagePreference) : "en";
+    const parts = core.buildTimestampHoverParts(state.hoveredTimestampMs, state.settings, locale);
+    if (!parts.convertedText && !parts.diffText) {
+      clearTimestampTooltips();
+      return;
+    }
+    tooltips.forEach(tooltip => {
+      if (!isVisible(tooltip)) {
+        return;
+      }
+      const existingExtra = tooltip.querySelector(".xfs-time-tooltip-extra");
+      const baseText = core.normalizeText(
+        existingExtra
+          ? (tooltip.textContent || "").replace(existingExtra.textContent || "", "")
+          : tooltip.textContent || ""
+      );
+      if (!looksLikeTimestampTooltipText(baseText)) {
+        return;
+      }
+      tooltip.dataset.xfsTimeTooltip = "1";
+      const container = findTooltipTextContainer(tooltip);
+      let extra = tooltip.querySelector(".xfs-time-tooltip-extra");
+      if (!extra) {
+        extra = document.createElement("span");
+        extra.className = "xfs-time-tooltip-extra";
+        container.appendChild(extra);
+      } else if (extra.parentElement !== container) {
+        container.appendChild(extra);
+      }
+      renderTooltipExtraNodes(extra, parts);
+    });
+  }
+
+  function looksLikeTimestampTooltipText(text) {
+    if (!text) {
+      return false;
+    }
+    return /\d{1,2}:\d{2}/.test(text) && /\d{4}/.test(text);
+  }
+
+  function findTooltipTextContainer(tooltip) {
+    const walker = document.createTreeWalker(tooltip, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node) {
+      if (node.parentElement && !node.parentElement.closest(".xfs-time-tooltip-extra") && (node.nodeValue || "").trim()) {
+        return node.parentElement;
+      }
+      node = walker.nextNode();
+    }
+    return tooltip;
+  }
+
+  function renderTooltipExtraNodes(extra, parts) {
+    const signature = `${parts.convertedText}|${parts.diffText}`;
+    if (extra.dataset.xfsSignature === signature) {
+      return;
+    }
+    extra.dataset.xfsSignature = signature;
+    extra.textContent = "";
+    if (parts.convertedText) {
+      const sep1 = document.createElement("span");
+      sep1.className = "xfs-time-tooltip-sep";
+      sep1.textContent = " | ";
+      const tzSpan = document.createElement("span");
+      tzSpan.className = "xfs-time-tooltip-tz";
+      tzSpan.textContent = parts.convertedText;
+      extra.appendChild(sep1);
+      extra.appendChild(tzSpan);
+    }
+    if (parts.diffText) {
+      const sep2 = document.createElement("span");
+      sep2.className = "xfs-time-tooltip-sep";
+      sep2.textContent = " | ";
+      const diffSpan = document.createElement("span");
+      diffSpan.className = "xfs-time-tooltip-diff";
+      diffSpan.textContent = parts.diffText;
+      extra.appendChild(sep2);
+      extra.appendChild(diffSpan);
+    }
   }
 
   function scheduleScan(delay) {

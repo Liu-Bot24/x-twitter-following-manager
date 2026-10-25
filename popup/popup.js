@@ -10,7 +10,18 @@
   const feedToggle = document.getElementById("feed-toggle");
   const userListToggle = document.getElementById("user-list-toggle");
   const lockListToggle = document.getElementById("lock-list-toggle");
+  const tzConvertToggle = document.getElementById("tz-convert-toggle");
+  const tzConvertPanel = document.getElementById("tz-convert-panel");
+  const tzConvertSelect = document.getElementById("tz-convert-select");
+  const tzNowDate = document.getElementById("tz-now-date");
+  const tzNowClock = document.getElementById("tz-now-clock");
+  const targetDiffToggle = document.getElementById("target-diff-toggle");
+  const targetDiffPanel = document.getElementById("target-diff-panel");
+  const targetDiffTzSelect = document.getElementById("target-diff-tz-select");
+  const targetDiffTimeInput = document.getElementById("target-diff-time-input");
+  const targetDiffNowValue = document.getElementById("target-diff-now-value");
   const languageToggle = document.getElementById("language-toggle");
+  const core = globalThis.XFollowStatsCore;
   const i18n = globalThis.XFSI18n;
   const storage = globalThis.XFSStorage;
   const STORAGE_KEY = "xfs:userStatsCacheV2";
@@ -22,10 +33,18 @@
     popupCacheCleared: "Cache cleared.",
     popupCapturedStatus: "Captured $1 users, queue $2",
     popupScriptNotReady: "The extension script is not loaded in this tab yet. Refresh X and try again.",
+    popupTargetDiffLabel: "Target time diff",
+    popupTargetDiffNowLabel: "Diff from now",
+    popupTargetDiffUnset: "Not set",
+    popupTzConvertLabel: "Timezone convert",
     popupUseOnX: "Use this on x.com or twitter.com pages.",
     shortName: "X/Twitter Following Manager"
   };
   let languagePreference = null;
+  let settingsRevision = 0;
+  let settingsSaveQueue = Promise.resolve();
+
+  populateTimezoneSelects();
 
   rescanButton.addEventListener("click", () => sendToActiveTab("xfs:rescan"));
   clearButton.addEventListener("click", clearCache);
@@ -35,7 +54,14 @@
   feedToggle.addEventListener("change", updateSettings);
   userListToggle.addEventListener("change", updateSettings);
   lockListToggle.addEventListener("change", updateSettings);
+  tzConvertToggle.addEventListener("change", updateSettings);
+  tzConvertSelect.addEventListener("change", updateSettings);
+  targetDiffToggle.addEventListener("change", updateSettings);
+  targetDiffTzSelect.addEventListener("change", updateSettings);
+  targetDiffTimeInput.addEventListener("input", updateSettings);
   languageToggle.addEventListener("change", updateLanguagePreference);
+
+  setInterval(renderLiveTimeDisplays, 15000);
 
   initLanguage().then(refreshStatus).catch(error => { status.textContent = t("storageSaveFailed", error.message); });
 
@@ -46,8 +72,11 @@
   }
 
   async function refreshStatus() {
+    const revision = settingsRevision;
     const storageError = await refreshStorageUsage();
-    applySettings(await readSettings());
+    await settingsSaveQueue;
+    const settings = await readSettings();
+    if (revision === settingsRevision) applySettings(settings);
     const cacheSize = await readCacheSize();
     cacheCount.textContent = String(cacheSize);
     const response = await sendToActiveTab("xfs:status", {}, { quiet: true });
@@ -61,13 +90,34 @@
   }
 
   async function updateSettings() {
-    const settings = {
+    const revision = ++settingsRevision;
+    const settings = normalizeSettings({
       feed: feedToggle.checked,
       userList: userListToggle.checked,
-      updateOnlyExisting: lockListToggle.checked
-    };
-    await chrome.storage.local.set({ [SETTINGS_KEY]: settings });
-    await sendToActiveTab("xfs:updateSettings", { settings }, { quiet: true });
+      updateOnlyExisting: lockListToggle.checked,
+      convertTzEnabled: tzConvertToggle.checked,
+      convertTzOffset: Number(tzConvertSelect.value),
+      targetDiffEnabled: targetDiffToggle.checked,
+      targetDiffTzOffset: Number(targetDiffTzSelect.value),
+      targetDiffTime: targetDiffTimeInput.value
+    });
+    syncSubPanels();
+    renderLiveTimeDisplays();
+    const save = settingsSaveQueue.then(async () => {
+      try {
+        await chrome.storage.local.set({ [SETTINGS_KEY]: settings });
+        return true;
+      } catch (error) {
+        if (revision === settingsRevision) status.textContent = t("storageSaveFailed", error.message);
+        return false;
+      }
+    });
+    settingsSaveQueue = save;
+    if (await save && revision === settingsRevision) {
+      // Content scripts receive settings through storage.onChanged. A delayed
+      // message must not write an older settings snapshot back to storage.
+      await sendToActiveTab("xfs:status", {}, { quiet: true });
+    }
   }
 
   async function clearCache() {
@@ -122,9 +172,7 @@
   function renderStatus(nextStatus) {
     visibleCount.textContent = String(nextStatus.visibleCells ?? "-");
     cacheCount.textContent = String(nextStatus.cachedUsers ?? "-");
-    if (nextStatus.settings) {
-      applySettings(nextStatus.settings);
-    }
+    // Page status is observational; the saved settings and local edits own UI state.
     status.textContent = nextStatus.persistError ? t("storageSaveFailed", nextStatus.persistError) : t("popupCapturedStatus", nextStatus.cachedUsers || 0, nextStatus.queued || 0);
   }
 
@@ -135,12 +183,58 @@
     feedToggle.disabled = isBusy;
     userListToggle.disabled = isBusy;
     lockListToggle.disabled = isBusy;
+    tzConvertToggle.disabled = isBusy;
+    targetDiffToggle.disabled = isBusy;
+  }
+
+  function populateTimezoneSelects() {
+    const prevConv = tzConvertSelect.value || "-7";
+    const prevRef = targetDiffTzSelect.value || "12";
+    const locale = i18n && i18n.localeTag ? i18n.localeTag(languagePreference) : "en";
+    tzConvertSelect.textContent = "";
+    targetDiffTzSelect.textContent = "";
+    for (let offset = -12; offset <= 14; offset += 1) {
+      const label = core && core.formatUtcOffsetOptionLabel
+        ? core.formatUtcOffsetOptionLabel(offset, locale)
+        : offset === 0 ? "UTC+0" : offset > 0 ? `UTC+${offset}` : `UTC${offset}`;
+      const value = String(offset);
+      tzConvertSelect.add(new Option(label, value, value === prevConv, value === prevConv));
+      targetDiffTzSelect.add(new Option(label, value, value === prevRef, value === prevRef));
+    }
+  }
+
+  function syncSubPanels() {
+    tzConvertPanel.hidden = !tzConvertToggle.checked;
+    targetDiffPanel.hidden = !targetDiffToggle.checked;
+    document.getElementById("tz-offset-hint").hidden = !tzConvertToggle.checked && !targetDiffToggle.checked;
+  }
+
+  function renderLiveTimeDisplays() {
+    const locale = i18n && i18n.localeTag ? i18n.localeTag(languagePreference) : "en";
+    const nowMs = Date.now();
+    const convertOffset = Number(tzConvertSelect.value);
+    if (core && core.formatShortClockInOffset) {
+      const shortClock = core.formatShortClockInOffset(nowMs, convertOffset, locale);
+      tzNowClock.textContent = shortClock.clock;
+      tzNowDate.textContent = shortClock.date;
+    }
+    const refTime = targetDiffTimeInput.value;
+    const refOffset = Number(targetDiffTzSelect.value);
+    if (!refTime) {
+      targetDiffNowValue.textContent = t("popupTargetDiffUnset");
+      return;
+    }
+    if (core && core.computeTargetMomentDiff) {
+      const diff = core.computeTargetMomentDiff(nowMs, refOffset, refTime, locale);
+      targetDiffNowValue.textContent = diff ? diff.text : t("popupTargetDiffUnset");
+    }
   }
 
   async function initLanguage() {
     languagePreference = await readLanguagePreference();
     applyStaticI18n();
     applyLanguageToggle();
+    populateTimezoneSelects();
   }
 
   async function updateLanguagePreference() {
@@ -148,6 +242,8 @@
     await chrome.storage.local.set({ [LANGUAGE_KEY]: languagePreference });
     applyStaticI18n();
     applyLanguageToggle();
+    populateTimezoneSelects();
+    renderLiveTimeDisplays();
     await notifyActiveTab("xfs:updateLanguage", { languagePreference });
     await refreshStatus();
   }
@@ -188,14 +284,29 @@
     feedToggle.checked = normalized.feed;
     userListToggle.checked = normalized.userList;
     lockListToggle.checked = normalized.updateOnlyExisting;
+    tzConvertToggle.checked = normalized.convertTzEnabled;
+    tzConvertSelect.value = String(normalized.convertTzOffset);
+    targetDiffToggle.checked = normalized.targetDiffEnabled;
+    targetDiffTzSelect.value = String(normalized.targetDiffTzOffset);
+    targetDiffTimeInput.value = normalized.targetDiffTime;
+    syncSubPanels();
+    renderLiveTimeDisplays();
   }
 
   function normalizeSettings(value) {
+    if (core && core.normalizeDisplaySettings) {
+      return core.normalizeDisplaySettings(value);
+    }
     const source = value && typeof value === "object" ? value : {};
     return {
       feed: source.feed !== false,
       userList: source.userList !== false,
-      updateOnlyExisting: source.updateOnlyExisting === true
+      updateOnlyExisting: source.updateOnlyExisting === true,
+      convertTzEnabled: source.convertTzEnabled === true,
+      convertTzOffset: Number.isFinite(Number(source.convertTzOffset)) ? Number(source.convertTzOffset) : -7,
+      targetDiffEnabled: source.targetDiffEnabled === true,
+      targetDiffTzOffset: Number.isFinite(Number(source.targetDiffTzOffset)) ? Number(source.targetDiffTzOffset) : 12,
+      targetDiffTime: typeof source.targetDiffTime === "string" ? source.targetDiffTime : "14:00"
     };
   }
 

@@ -283,5 +283,20 @@
   },
   "approximateLabel": {
     "message": "近似值"
+  },
+  "popupTzConvertLabel": {
+    "message": "时区转换"
+  },
+  "popupFixedOffsetHint": {
+    "message": "使用固定 UTC 偏移，不会自动切换夏令时。"
+  },
+  "popupTargetDiffLabel": {
+    "message": "指定时刻时间差"
+  },
+  "popupTargetDiffNowLabel": {
+    "message": "此时距该时刻"
+  },
+  "popupTargetDiffUnset": {
+    "message": "未设置"
   }
 }

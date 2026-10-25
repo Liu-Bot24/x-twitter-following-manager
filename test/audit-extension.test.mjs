@@ -83,3 +83,46 @@ test('real MV3 extension: capture, native DOM, manager paging/import, locks, cle
   assert.deepEqual(pageErrors, []);
   await b.close(); await popup.close();
 });
+
+test('real MV3 timestamp settings propagate through storage while existing display preferences are preserved', async () => {
+  const SETTINGS = 'xfs:displaySettingsV1';
+  const initial = { feed: false, userList: true, updateOnlyExisting: true, convertTzEnabled: false, convertTzOffset: 8, targetDiffEnabled: false, targetDiffTzOffset: 12, targetDiffTime: '2026-10-25T14:00' };
+  await worker.evaluate(({ key, settings }) => chrome.storage.local.set({ [key]: settings, 'xfs:languagePreferenceV1': 'en' }), { key: SETTINGS, settings: initial });
+  await context.route('https://x.com/time-fixture', route => route.fulfill({ contentType: 'text/html; charset=utf-8', body: '<style>[role=tooltip]{max-width:180px;white-space:normal}a{display:inline-block;margin:20px}</style><main><a href="/alice/status/1"><time datetime="2026-10-24T19:21:00Z">Oct 24</time></a><div role="tooltip">7:21 PM · Oct 24, 2026</div></main>' }));
+  const x = await context.newPage();
+  const popup = await context.newPage();
+  try {
+    await x.goto('https://x.com/time-fixture');
+    await popup.setViewportSize({ width: 368, height: 600 });
+    await popup.goto(`chrome-extension://${id}/popup/popup.html`);
+    await popup.waitForFunction(() => document.querySelector('#target-diff-time-input').value === '2026-10-25T14:00' && !document.querySelector('#feed-toggle').disabled);
+    // A real action popup targets the X tab; a tab-hosted popup needs this query seam.
+    const xTab = await worker.evaluate(async () => (await chrome.tabs.query({ url: 'https://x.com/time-fixture' }))[0]);
+    await popup.evaluate(tab => { chrome.tabs.query = async () => [tab]; }, { id: xTab.id, url: xTab.url });
+    for (const toggle of ['#tz-convert-toggle', '#target-diff-toggle']) {
+      await popup.locator('label').filter({ has: popup.locator(toggle) }).click();
+      await popup.waitForFunction(() => !document.querySelector('#feed-toggle').disabled);
+    }
+    await x.locator('time').hover();
+    await x.waitForFunction(() => document.querySelector('.xfs-time-tooltip-extra')?.textContent.includes('+6h 39m'));
+    assert.match(await x.locator('[role=tooltip]').textContent(), /UTC\+8 3:21 AM/);
+    await popup.locator('#target-diff-time-input').fill('2026-10-25T16:00');
+    await x.waitForFunction(() => document.querySelector('.xfs-time-tooltip-extra')?.textContent.includes('+8h 39m'));
+    assert.deepEqual(await read(SETTINGS), { ...initial, convertTzEnabled: true, targetDiffEnabled: true, targetDiffTime: '2026-10-25T16:00' });
+    await popup.screenshot({ path: path.join(root, 'test-results', 'time-popup-en.png'), fullPage: true, animations: 'disabled' });
+    await popup.locator('.language-switch').click();
+    await popup.waitForFunction(() => document.querySelector('#tz-offset-hint').textContent.includes('不会自动切换夏令时'));
+    await x.waitForFunction(() => document.querySelector('.xfs-time-tooltip-extra')?.textContent.includes('+8小时39分'));
+    assert.equal(await popup.locator('#language-toggle').isChecked(), true);
+    await popup.screenshot({ path: path.join(root, 'test-results', 'time-popup-zh.png'), fullPage: true, animations: 'disabled' });
+    for (const toggle of ['#tz-convert-toggle', '#target-diff-toggle']) {
+      await popup.locator('label').filter({ has: popup.locator(toggle) }).click();
+      await popup.waitForFunction(() => !document.querySelector('#feed-toggle').disabled);
+    }
+    await x.waitForFunction(() => !document.querySelector('.xfs-time-tooltip-extra'));
+    assert.equal(await x.locator('[role=tooltip]').getAttribute('data-xfs-time-tooltip'), null);
+    assert.equal(await x.locator('[role=tooltip]').textContent(), '7:21 PM · Oct 24, 2026');
+    assert.deepEqual(await read(SETTINGS), { ...initial, targetDiffTime: '2026-10-25T16:00' });
+    assert.deepEqual(pageErrors, []);
+  } finally { await x.close(); await popup.close(); }
+});

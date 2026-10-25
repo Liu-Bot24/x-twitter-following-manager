@@ -70,6 +70,10 @@ The extension chooses the available reading path automatically. It tries backgro
 
 Following and follower counts remain fresh for three days. The account record stays in the local manager, but its statistics are collected again when the account is encountered after that period.
 
+The popup also offers two time options, both off by default. **Timezone convert** adds a timestamp at the selected UTC offset beside the original date tooltip when you hover over a post's time. **Target time diff** compares that post's timestamp with your chosen reference date and time; the popup also shows the difference from the current time. Positive values mean the reference moment is later, and negative values mean it is earlier. These options work independently without changing account statistics settings or cached accounts.
+
+Time options use fixed, whole-hour UTC offsets and do not adjust automatically for daylight saving time. City names are offset examples; select the appropriate standard-time or daylight-saving offset yourself.
+
 ![Account stats shown in user lists and right-side user modules](docs/assets/screenshot-111.jpg)
 
 ![Account stats shown in the Feed and post detail pages](docs/assets/screenshot-222.jpg)

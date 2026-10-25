@@ -5,22 +5,22 @@
 body {
   background: #050505;
   color: #e7e9ea;
-  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font: 13px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   margin: 0;
-  width: 290px;
+  width: 368px;
 }
 
 main {
-  padding: 16px;
+  padding: 12px 14px;
 }
 
 header {
-  padding-right: 82px;
+  padding-right: 78px;
   position: relative;
 }
 
 h1 {
-  font-size: 16px;
+  font-size: 15px;
   line-height: 1.2;
   margin: 0;
 }
@@ -29,8 +29,8 @@ h1 {
   align-items: baseline;
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 8px;
-  margin: 0 0 6px;
+  gap: 4px 8px;
+  margin: 0 0 4px;
 }
 
 .author-link {
@@ -118,21 +118,25 @@ p {
   display: grid;
   gap: 8px;
   grid-template-columns: 1fr 1fr;
-  margin: 14px 0;
+  margin: 8px 0;
 }
 
 .metrics div {
+  align-items: baseline;
   border: 1px solid #263340;
   border-radius: 8px;
-  padding: 10px;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  padding: 7px 10px;
 }
 
 .metrics strong {
   color: #1d9bf0;
   display: block;
-  font-size: 20px;
+  font-size: 18px;
   line-height: 1;
-  margin-bottom: 5px;
+  margin-bottom: 0;
 }
 
 .metrics span {
@@ -144,9 +148,9 @@ p {
   border: 1px solid #263340;
   border-radius: 8px;
   display: grid;
-  gap: 2px;
-  margin: 0 0 12px;
-  padding: 6px 10px;
+  gap: 1px;
+  margin: 0 0 9px;
+  padding: 4px 10px;
 }
 
 .switch-row {
@@ -155,7 +159,7 @@ p {
   display: grid;
   font-weight: 700;
   grid-template-columns: 1fr auto;
-  min-height: 34px;
+  min-height: 28px;
   position: relative;
 }
 
@@ -225,9 +229,139 @@ p {
   transform: translateY(0);
 }
 
+.settings-divider {
+  border-top: 1px solid #1f2a35;
+  margin: 2px 0;
+}
+
+.sub-panel {
+  border-bottom: 1px solid #1b242d;
+  display: grid;
+  gap: 5px;
+  margin-bottom: 2px;
+  padding: 2px 0 6px;
+}
+
+.sub-panel:last-child {
+  border-bottom: 0;
+  margin-bottom: 0;
+}
+
+.sub-panel[hidden] {
+  display: none;
+}
+
+.tz-convert-row {
+  align-items: center;
+  display: grid;
+  gap: 6px;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+}
+
+.target-diff-inputs {
+  align-items: center;
+  display: grid;
+  gap: 6px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr);
+}
+
+.tz-select,
+.tz-time-input {
+  background: #15202b;
+  border: 1px solid #2f3b47;
+  border-radius: 6px;
+  color: #e7e9ea;
+  color-scheme: dark;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  height: 28px;
+  line-height: 26px;
+  outline: none;
+  padding: 0 7px;
+  width: 100%;
+}
+
+.tz-time-input::-webkit-datetime-edit,
+.tz-time-input::-webkit-datetime-edit-fields-wrapper,
+.tz-time-input::-webkit-datetime-edit-text,
+.tz-time-input::-webkit-datetime-edit-year-field,
+.tz-time-input::-webkit-datetime-edit-month-field,
+.tz-time-input::-webkit-datetime-edit-day-field,
+.tz-time-input::-webkit-datetime-edit-hour-field,
+.tz-time-input::-webkit-datetime-edit-minute-field,
+.tz-time-input::-webkit-datetime-edit-ampm-field {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.tz-select:focus,
+.tz-time-input:focus {
+  border-color: #1d9bf0;
+}
+
+.tz-readout-box {
+  align-items: center;
+  background: #0d131a;
+  border: 1px solid #1e2c3a;
+  border-radius: 6px;
+  display: flex;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  height: 28px;
+  justify-content: space-between;
+  padding: 0 8px;
+}
+
+.tz-now-date {
+  color: #8b98a5;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.tz-now-clock {
+  color: #8fd8ff;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.target-diff-readout {
+  align-items: center;
+  background: rgba(29, 155, 240, 0.11);
+  border: 1px solid rgba(29, 155, 240, 0.28);
+  border-radius: 6px;
+  display: flex;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  height: 28px;
+  justify-content: space-between;
+  padding: 0 8px;
+}
+
+.target-diff-readout span {
+  color: #8b98a5;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.target-diff-readout strong {
+  color: #ffd400;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .actions {
   display: grid;
-  gap: 8px;
+  gap: 6px;
+  grid-template-columns: 1fr 1fr;
+}
+
+.actions #open-manager {
+  grid-column: 1 / -1;
 }
 
 button {
@@ -237,8 +371,8 @@ button {
   border-radius: 999px;
   color: #0f1419;
   cursor: pointer;
-  font: 700 14px/18px inherit;
-  padding: 8px 12px;
+  font: 700 13px/16px inherit;
+  padding: 7px 10px;
 }
 
 button.secondary {
@@ -253,6 +387,7 @@ button:disabled {
 }
 
 .hint {
-  font-size: 12px;
-  margin-top: 12px;
+  font-size: 11px;
+  line-height: 1.35;
+  margin-top: 7px;
 }

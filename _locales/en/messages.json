@@ -283,5 +283,20 @@
   },
   "approximateLabel": {
     "message": "approximate"
+  },
+  "popupTzConvertLabel": {
+    "message": "Timezone convert"
+  },
+  "popupFixedOffsetHint": {
+    "message": "Fixed UTC offsets; daylight saving time is not adjusted automatically."
+  },
+  "popupTargetDiffLabel": {
+    "message": "Target time diff"
+  },
+  "popupTargetDiffNowLabel": {
+    "message": "Diff from now"
+  },
+  "popupTargetDiffUnset": {
+    "message": "Not set"
   }
 }

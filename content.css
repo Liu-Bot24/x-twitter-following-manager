@@ -61,3 +61,35 @@ html[data-xfs-silent-hover="1"] [data-testid="HoverCard"],
   max-width: min(210px, 34vw);
   padding-inline: 7px;
 }
+
+[role="tooltip"][data-xfs-time-tooltip="1"],
+[role="tooltip"][data-xfs-time-tooltip="1"] * {
+  max-width: none !important;
+  white-space: nowrap !important;
+}
+
+.xfs-time-tooltip-extra {
+  display: inline !important;
+  font: inherit !important;
+  line-height: inherit !important;
+  white-space: nowrap !important;
+}
+
+.xfs-time-tooltip-sep {
+  color: rgba(255, 255, 255, 0.45) !important;
+  font: inherit !important;
+  font-weight: 400 !important;
+  margin: 0 4px !important;
+}
+
+.xfs-time-tooltip-tz {
+  color: #8fd8ff !important;
+  font: inherit !important;
+  font-weight: 600 !important;
+}
+
+.xfs-time-tooltip-diff {
+  color: #ffd400 !important;
+  font: inherit !important;
+  font-weight: 700 !important;
+}
