@@ -1,4 +1,6 @@
 {
+  "managerIdentityHistory": { "message": "Previous identities ($1)" },
+  "managerExportIdentityHistory": { "message": "Export identity history (JSON)" },
   "extensionName": {
     "message": "X/Twitter Following Manager - Instantly Show Follower Counts & Export Lists",
     "description": "Chrome Web Store title and extension name."

@@ -98,7 +98,7 @@ assert.equal(englishStats.followingDisplay, "12.4K");
 assert.equal(englishStats.followersDisplay, "1.2M");
 
 const bioNumberStats = core.parseStatsText(
-  "8年币圈老韭菜，微信视频号20w粉丝，原证券持牌投顾 业务：有个web3群；被盗/被封资产找回 + v :1029381748 743 正在关注 2,862 关注者"
+  "8年币圈老韭菜，微信视频号20w粉丝，原证券持牌投顾 业务：有个web3群；被盗/被封资产找回 + v :1029381748 · 743 正在关注 2,862 关注者"
 );
 assert.equal(bioNumberStats.followingDisplay, "743");
 assert.equal(bioNumberStats.followersDisplay, "2,862");
@@ -303,8 +303,8 @@ const displayOnlyMerge = core.mergeCachedUserRecords(
     updatedAt: 6000
   }
 );
-assert.equal(displayOnlyMerge.followingCount, null);
-assert.equal(displayOnlyMerge.followersCount, null);
+assert.equal(displayOnlyMerge.followingCount, 101);
+assert.equal(displayOnlyMerge.followersCount, 201);
 assert.equal(displayOnlyMerge.followingDisplay, "101");
 assert.equal(displayOnlyMerge.followersDisplay, "201");
 

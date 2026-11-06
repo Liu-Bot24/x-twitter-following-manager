@@ -37,7 +37,7 @@ importScripts("stats-core.js");
   }
   async function operate(message, sender) {
     const data = await storageCall("get", [CACHE_KEY, GENERATION_KEY, CLEARED_AT_KEY, SETTINGS_KEY, STATUS_KEY]);
-    const cache = Object.assign(Object.create(null), data[CACHE_KEY] || {});
+    let cache = core.reconcileUserCaches({}, data[CACHE_KEY]).cache;
     const generation = generationOf(data);
     if (message.action === 'status') return { count: Object.keys(cache).length, status: data[STATUS_KEY] || {}, bytesUsed: await storageCall('getBytesInUse', null), budgetBytes: BUDGET_BYTES };
     if (message.action === "read") {
@@ -62,17 +62,14 @@ importScripts("stats-core.js");
     for (const record of message.users) {
       const username = core.normalizeUsername(record?.username);
       if (!username) continue;
-      if (message.action !== "import" && locked && !Object.hasOwn(cache, username)) { rejectedUsernames.push(username); continue; }
+      if (message.action !== "import" && locked && !Object.hasOwn(cache, username)
+        && !(record.userId && Object.values(cache).some(user => user.userId === record.userId))) { rejectedUsernames.push(username); continue; }
       const existing = cache[username];
-      if (message.action === "import") {
-        const next = core.mergeObservedUser(existing, { ...record, username }, record.lastSeenAt || now);
-        next.sources = [...new Set([...(existing?.sources || []), ...(record.sources || []), "import"])].sort();
-        if (record.firstSeenAt) next.firstSeenAt = record.firstSeenAt;
-        cache[username] = next;
-      } else {
-        cache[username] = core.mergeCachedUserRecords(existing, { ...record, username });
-      }
+      cache[username] = message.action === 'import'
+        ? core.mergeImportedUser(existing, { ...record, username }, now)
+        : core.mergeCachedUserRecords(existing, { ...record, username });
     }
+    cache = core.reconcileUserCaches({}, cache).cache;
     const oldBytes = bytes(data[CACHE_KEY] || {});
     const cacheBytes = bytes(cache);
     const totalBytes = await storageCall("getBytesInUse", null);

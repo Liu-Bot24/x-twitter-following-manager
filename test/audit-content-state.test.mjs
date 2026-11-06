@@ -100,3 +100,46 @@ test('another writer success does not hide a local unsaved-data error', async ()
   assert.equal(api.state.persistError, '');
   f.context.__xFollowStatsContentCleanup();
 });
+
+test('R4: a late older request cannot replace newer statistics in the same generation', async () => {
+  const f = await fixture(); const api = f.context.audit;
+  try {
+    const start = Date.now() - 1000;
+    for (const [offset, followersCount] of [[100, 200], [0, 100]]) {
+      api.onPageMessage({ source: f.context.window, data: {
+        source: f.context.XFollowStatsCore.SOURCE, type: 'users', captureGeneration: 0,
+        requestStartedAt: start + offset, users: [{ username: 'alice', followingCount: 12, followersCount }]
+      } });
+    }
+    assert.equal(api.state.cache.get('alice').followersCount, 200);
+    assert.equal(api.state.cache.get('alice').statsUpdatedAt, start + 100);
+  } finally { f.context.__xFollowStatsContentCleanup(); }
+});
+
+test('R4: same-millisecond request order, duplicate delivery and decreases survive cache reload', async () => {
+  for (const order of [[1, 2, 1, 2], [2, 1, 2, 1]]) {
+    const f = await fixture(); const api = f.context.audit;
+    try {
+      const startedAt = Date.now() - 500;
+      for (const sequence of order) {
+        api.onPageMessage({ source: f.context.window, data: {
+          source: f.context.XFollowStatsCore.SOURCE, type: 'users', captureGeneration: 0,
+          requestStartedAt: startedAt, requestSequence: sequence, documentId: 'document-one',
+          users: [{ username: 'alice', userId: '111', followingCount: 12, followersCount: sequence === 2 ? 50 : 100 }]
+        } });
+      }
+      const latest = api.state.cache.get('alice');
+      assert.equal(latest.followersCount, 50);
+      assert.equal(latest.statsCapture.sequence, 2);
+      assert.equal(latest.statsUpdatedAt, startedAt);
+      f.allowWrites(); await api.persistCacheNow();
+      assert.equal(f.savedUsers.at(-1).statsCapture.sequence, 2);
+      const old = { ...latest, followersCount: 100, statsCapture: { ...latest.statsCapture, sequence: 1 }, statsReceivedAt: Date.now() + 1000, updatedAt: Date.now() + 1000 };
+      const core = f.context.XFollowStatsCore;
+      for (const [left, right] of [[latest, old], [old, latest]]) {
+        const restored = core.reconcileUserCaches({}, JSON.parse(JSON.stringify({ alice: left }))).cache;
+        assert.equal(core.mergeCachedUserRecords(restored.alice, right).followersCount, 50);
+      }
+    } finally { f.context.__xFollowStatsContentCleanup(); }
+  }
+});

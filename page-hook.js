@@ -58,6 +58,12 @@
     return normalized.includes("user") || normalized.includes("follow");
   }
 
+  const documentId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  let requestSequence = 0;
+  function startCapture() {
+    return { generation: captureGeneration, startedAt: Date.now(), documentId, sequence: ++requestSequence };
+  }
+
   function postUsers(users, sourceUrl, capture) {
     if (capture.generation !== captureGeneration || !users || users.length === 0) {
       return;
@@ -75,6 +81,8 @@
         type: "users",
         captureGeneration: capture.generation,
         requestStartedAt: capture.startedAt,
+        requestSequence: capture.sequence,
+        documentId: capture.documentId,
         users,
         sourceUrl: String(sourceUrl || "")
       },
@@ -129,7 +137,7 @@
 
   window.fetch = function xFollowStatsFetch(input, init) {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input && input.url;
-    const capture = { generation: captureGeneration, startedAt: Date.now() };
+    const capture = startCapture();
     const responsePromise = originalFetch.apply(this, arguments);
     if (!shouldInspectUrl(url)) {
       return responsePromise;
@@ -156,7 +164,7 @@
   XMLHttpRequest.prototype.open.toString = () => originalXhrOpen.toString();
 
   XMLHttpRequest.prototype.send = function xFollowStatsXhrSend() {
-    this.__xFollowStatsCapture = { generation: captureGeneration, startedAt: Date.now() };
+    this.__xFollowStatsCapture = startCapture();
     if (!this.__xFollowStatsListening) {
       this.__xFollowStatsListening = true;
       this.addEventListener("load", () => {

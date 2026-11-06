@@ -4,3 +4,4 @@ DEVELOPMENT_LOG.md
 node_modules/
 test-results/
 AGENTS.md
+output/playwright/
