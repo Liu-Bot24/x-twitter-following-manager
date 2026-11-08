@@ -117,17 +117,28 @@ p {
 .metrics {
   display: grid;
   gap: 8px;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.6fr);
   margin: 8px 0;
 }
 
+.metrics strong,
+.metrics span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#time-metric-value {
+  font-variant-numeric: tabular-nums;
+}
+
 .metrics div {
-  align-items: baseline;
   border: 1px solid #263340;
   border-radius: 8px;
   display: flex;
-  gap: 8px;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
   padding: 7px 10px;
 }
 

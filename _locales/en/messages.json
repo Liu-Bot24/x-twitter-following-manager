@@ -296,6 +296,9 @@
   "popupTargetDiffNowLabel": {
     "message": "Diff from now"
   },
+  "popupMetricTargetDiffLabel": {
+    "message": "To target"
+  },
   "popupTargetDiffUnset": {
     "message": "Not set"
   }

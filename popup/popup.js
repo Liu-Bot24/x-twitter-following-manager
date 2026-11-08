@@ -20,6 +20,9 @@
   const targetDiffTzSelect = document.getElementById("target-diff-tz-select");
   const targetDiffTimeInput = document.getElementById("target-diff-time-input");
   const targetDiffNowValue = document.getElementById("target-diff-now-value");
+  const timeMetric = document.getElementById("time-metric");
+  const timeMetricValue = document.getElementById("time-metric-value");
+  const timeMetricLabel = document.getElementById("time-metric-label");
   const languageToggle = document.getElementById("language-toggle");
   const core = globalThis.XFollowStatsCore;
   const i18n = globalThis.XFSI18n;
@@ -61,7 +64,8 @@
   targetDiffTimeInput.addEventListener("input", updateSettings);
   languageToggle.addEventListener("change", updateLanguagePreference);
 
-  setInterval(renderLiveTimeDisplays, 15000);
+  renderLiveTimeDisplays();
+  setInterval(renderLiveTimeDisplays, 1000);
 
   initLanguage().then(refreshStatus).catch(error => { status.textContent = t("storageSaveFailed", error.message); });
 
@@ -220,14 +224,28 @@
     }
     const refTime = targetDiffTimeInput.value;
     const refOffset = Number(targetDiffTzSelect.value);
-    if (!refTime) {
-      targetDiffNowValue.textContent = t("popupTargetDiffUnset");
+    const diff = refTime && core && core.computeTargetMomentDiff
+      ? core.computeTargetMomentDiff(nowMs, refOffset, refTime, locale)
+      : null;
+    const diffText = diff ? diff.text : t("popupTargetDiffUnset");
+    targetDiffNowValue.textContent = diffText;
+    renderTimeMetric(nowMs, convertOffset, locale, diffText);
+  }
+
+  function renderTimeMetric(nowMs, convertOffset, locale, diffText) {
+    if (targetDiffToggle.checked) {
+      timeMetricValue.textContent = diffText;
+      timeMetricLabel.textContent = t("popupMetricTargetDiffLabel");
+      timeMetric.title = "";
       return;
     }
-    if (core && core.computeTargetMomentDiff) {
-      const diff = core.computeTargetMomentDiff(nowMs, refOffset, refTime, locale);
-      targetDiffNowValue.textContent = diff ? diff.text : t("popupTargetDiffUnset");
-    }
+    const shortClock = core && core.formatShortClockInOffset
+      ? core.formatShortClockInOffset(nowMs, convertOffset, locale)
+      : { clock: "--:--", date: "" };
+    const tzLabel = core && core.formatUtcOffsetLabel ? core.formatUtcOffsetLabel(convertOffset) : "";
+    timeMetricValue.textContent = shortClock.clock;
+    timeMetricLabel.textContent = tzLabel;
+    timeMetric.title = [tzLabel, shortClock.date, shortClock.clock].filter(Boolean).join(" ");
   }
 
   async function initLanguage() {
