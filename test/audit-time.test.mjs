@@ -11,8 +11,9 @@ const [core, storage, i18n, content, css, popup, popupScript] = await Promise.al
 );
 const settings = { feed: false, userList: true, updateOnlyExisting: true, convertTzEnabled: true, convertTzOffset: 8, targetDiffEnabled: true, targetDiffTzOffset: 12, targetDiffTime: '2026-10-25T14:00' };
 
-async function contentFixture() {
+async function contentFixture(options = {}) {
   const page = await browser.newPage();
+  if (options.now) await page.clock.install({ time: new Date(options.now) });
   await page.route('https://x.com/**', route => route.fulfill({ contentType: 'text/html; charset=utf-8', body: '<style>[role=tooltip]{max-width:180px;white-space:normal}</style><main><a href="/alice/status/1"><time datetime="2026-10-24T19:21:00Z">Oct 24</time></a><div role="tooltip" id="time-tip">7:21 PM · Oct 24, 2026</div><div role="tooltip" id="other-tip">Copy link</div></main>' }));
   await page.goto('https://x.com/home');
   await page.evaluate(() => {
@@ -44,6 +45,21 @@ test('timestamp options render independently and disabling both restores the nat
     await page.evaluate(() => { audit.state.settings.convertTzEnabled = false; audit.refreshTimestampTooltips(); });
     assert.deepEqual(await tooltipState(page), { text: '7:21 PM · Oct 24, 2026', marker: false, whiteSpace: 'normal', maxWidth: '180px', extras: 0 });
     assert.equal(await page.locator('time').getAttribute('datetime'), '2026-10-24T19:21:00Z');
+  } finally { await page.close(); }
+});
+
+test('third tooltip segment is the target diff when enabled, otherwise a live clock in the conversion offset', async () => {
+  const page = await contentFixture({ now: '2026-11-09T00:59:40Z' });
+  const segments = () => page.locator('#time-tip').evaluate(el => [...el.querySelectorAll('.xfs-time-tooltip-tz, .xfs-time-tooltip-diff, .xfs-time-tooltip-now')].map(node => `${node.className}:${node.textContent}`));
+  try {
+    assert.deepEqual(await segments(), ['xfs-time-tooltip-tz:UTC+8 3:21 AM · Oct 25, 2026', 'xfs-time-tooltip-diff:+6h 39m']);
+    await page.evaluate(() => { audit.state.settings.targetDiffEnabled = false; audit.refreshTimestampTooltips(); });
+    assert.deepEqual(await segments(), ['xfs-time-tooltip-tz:UTC+8 3:21 AM · Oct 25, 2026', 'xfs-time-tooltip-now:Now 8:59 AM']);
+    await page.clock.runFor(21000);
+    assert.deepEqual(await segments(), ['xfs-time-tooltip-tz:UTC+8 3:21 AM · Oct 25, 2026', 'xfs-time-tooltip-now:Now 9:00 AM']);
+    await page.evaluate(() => { audit.state.settings.targetDiffEnabled = true; audit.refreshTimestampTooltips(); });
+    assert.deepEqual(await segments(), ['xfs-time-tooltip-tz:UTC+8 3:21 AM · Oct 25, 2026', 'xfs-time-tooltip-diff:+6h 39m']);
+    assert.equal(await page.evaluate(() => audit.state.tooltipClockTimer), 0);
   } finally { await page.close(); }
 });
 

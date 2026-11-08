@@ -82,6 +82,7 @@
     statsFromHover: 0,
     hoveredTimestampMs: 0,
     hoveredTimestampElement: null,
+    tooltipClockTimer: 0,
     userActivityVersion: 0
   };
 
@@ -391,6 +392,7 @@
   }
 
   function clearTimestampTooltips() {
+    syncTooltipClock(false);
     document.querySelectorAll(".xfs-time-tooltip-extra").forEach(extra => extra.remove());
     document.querySelectorAll("[data-xfs-time-tooltip]").forEach(tooltip => tooltip.removeAttribute("data-xfs-time-tooltip"));
   }
@@ -406,10 +408,11 @@
     }
     const locale = i18n && i18n.localeTag ? i18n.localeTag(state.languagePreference) : "en";
     const parts = core.buildTimestampHoverParts(state.hoveredTimestampMs, state.settings, locale);
-    if (!parts.convertedText && !parts.diffText) {
+    if (!parts.convertedText && !parts.diffText && !parts.nowText) {
       clearTimestampTooltips();
       return;
     }
+    let rendered = false;
     tooltips.forEach(tooltip => {
       if (!isVisible(tooltip)) {
         return;
@@ -434,7 +437,9 @@
         container.appendChild(extra);
       }
       renderTooltipExtraNodes(extra, parts);
+      rendered = true;
     });
+    syncTooltipClock(rendered && Boolean(parts.nowText));
   }
 
   function looksLikeTimestampTooltipText(text) {
@@ -457,7 +462,7 @@
   }
 
   function renderTooltipExtraNodes(extra, parts) {
-    const signature = `${parts.convertedText}|${parts.diffText}`;
+    const signature = `${parts.convertedText}|${parts.diffText}|${parts.nowText || ""}`;
     if (extra.dataset.xfsSignature === signature) {
       return;
     }
@@ -482,6 +487,32 @@
       diffSpan.textContent = parts.diffText;
       extra.appendChild(sep2);
       extra.appendChild(diffSpan);
+    }
+    if (parts.nowText) {
+      const sep3 = document.createElement("span");
+      sep3.className = "xfs-time-tooltip-sep";
+      sep3.textContent = " | ";
+      const nowSpan = document.createElement("span");
+      nowSpan.className = "xfs-time-tooltip-now";
+      nowSpan.textContent = parts.nowText;
+      extra.appendChild(sep3);
+      extra.appendChild(nowSpan);
+    }
+  }
+
+  // Keeps the "now" segment current while a timestamp tooltip stays open.
+  function syncTooltipClock(active) {
+    if (active && !state.tooltipClockTimer) {
+      state.tooltipClockTimer = setInterval(() => {
+        if (!state.hoveredTimestampMs || !document.querySelector('[data-xfs-time-tooltip="1"]')) {
+          syncTooltipClock(false);
+          return;
+        }
+        refreshTimestampTooltips();
+      }, 1000);
+    } else if (!active && state.tooltipClockTimer) {
+      clearInterval(state.tooltipClockTimer);
+      state.tooltipClockTimer = 0;
     }
   }
 

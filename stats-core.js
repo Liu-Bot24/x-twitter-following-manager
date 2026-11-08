@@ -337,11 +337,11 @@
     };
   }
 
-  function buildTimestampHoverParts(timestampMs, settings, locale) {
+  function buildTimestampHoverParts(timestampMs, settings, locale, nowMs) {
     const normalized = normalizeDisplaySettings(settings);
     const ms = toFiniteNumber(timestampMs);
     if (ms === null) {
-      return { convertedText: "", diffText: "", diffMinutes: 0 };
+      return { convertedText: "", diffText: "", diffMinutes: 0, nowText: "" };
     }
     let convertedText = "";
     if (normalized.convertTzEnabled) {
@@ -365,10 +365,20 @@
         diffMinutes = diff.diffMinutes;
       }
     }
+    // Third segment: the target diff when that option is on; otherwise the
+    // current time in the same fixed offset used for the converted segment.
+    let nowText = "";
+    const now = toFiniteNumber(nowMs === undefined ? Date.now() : nowMs);
+    if (normalized.convertTzEnabled && !normalized.targetDiffEnabled && now !== null) {
+      const isZh = String(locale || "").toLowerCase().startsWith("zh");
+      const clock = formatShortClockInOffset(now, normalized.convertTzOffset, locale).clock;
+      nowText = `${isZh ? "现在" : "Now"} ${clock}`;
+    }
     return {
       convertedText,
       diffText,
-      diffMinutes
+      diffMinutes,
+      nowText
     };
   }
 

@@ -93,3 +93,9 @@ html[data-xfs-silent-hover="1"] [data-testid="HoverCard"],
   font: inherit !important;
   font-weight: 700 !important;
 }
+
+.xfs-time-tooltip-now {
+  color: #9be38f !important;
+  font: inherit !important;
+  font-weight: 600 !important;
+}

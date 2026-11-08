@@ -855,6 +855,22 @@ const hoverOnlyTz = core.buildTimestampHoverParts(
 assert.equal(hoverOnlyTz.convertedText, "UTC-7 下午12:21 · 2026年10月24日");
 assert.equal(hoverOnlyTz.diffText, "");
 
+// Third segment: current time in the conversion offset only when the target diff is off.
+const fixedNowMs = Date.UTC(2026, 10, 9, 5, 9);
+assert.equal(core.buildTimestampHoverParts(sampleTweetMs, customTzSettings, "zh-CN", fixedNowMs).nowText, "");
+assert.equal(
+  core.buildTimestampHoverParts(sampleTweetMs, { ...customTzSettings, targetDiffEnabled: false }, "zh-CN", fixedNowMs).nowText,
+  "现在 下午10:09"
+);
+assert.equal(
+  core.buildTimestampHoverParts(sampleTweetMs, { ...customTzSettings, targetDiffEnabled: false, convertTzOffset: -8 }, "en", fixedNowMs).nowText,
+  "Now 9:09 PM"
+);
+assert.equal(
+  core.buildTimestampHoverParts(sampleTweetMs, { ...customTzSettings, targetDiffEnabled: false, convertTzEnabled: false }, "zh-CN", fixedNowMs).nowText,
+  ""
+);
+
 assert.match(popupHtml, /id="tz-convert-toggle"/);
 assert.match(popupHtml, /id="target-diff-toggle"/);
 assert.match(contentCss, /\.xfs-time-tooltip-tz/);
