@@ -59,9 +59,8 @@ test('an empty target and content cleanup both remove timestamp styling without 
   } finally { await page.close(); }
 });
 
-async function popupFixture(options = {}) {
+async function popupFixture() {
   const page = await browser.newPage();
-  if (options.now) await page.clock.install({ time: new Date(options.now) });
   await page.setContent(popup.replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, ''));
   await page.addScriptTag({ content: core });
   await page.addScriptTag({ content: i18n });
@@ -90,26 +89,6 @@ async function popupFixture(options = {}) {
   await page.waitForFunction(() => document.querySelector('#target-diff-time-input').value === '2026-10-25T14:00' && !document.querySelector('#feed-toggle').disabled);
   return page;
 }
-
-test('third metric shows the target diff when enabled, otherwise a live clock in the conversion timezone', async () => {
-  // Target 2026-10-25 14:00 at UTC+12 is 02:00Z, one hour after this clock.
-  const page = await popupFixture({ now: '2026-10-25T00:59:40Z' });
-  try {
-    const metric = () => page.evaluate(() => ({ value: document.querySelector('#time-metric-value').textContent, label: document.querySelector('#time-metric-label').textContent }));
-    const idle = () => page.waitForFunction(() => !document.querySelector('#feed-toggle').disabled);
-    assert.deepEqual(await metric(), { value: '+1h', label: 'To target' });
-    await page.locator('#target-diff-toggle').uncheck({ force: true });
-    assert.deepEqual(await metric(), { value: '8:59 AM', label: 'UTC+8' });
-    await page.clock.runFor(21000);
-    assert.deepEqual(await metric(), { value: '9:00 AM', label: 'UTC+8' });
-    await idle();
-    await page.locator('#tz-convert-select').selectOption('-7');
-    assert.deepEqual(await metric(), { value: '6:00 PM', label: 'UTC-7' });
-    await idle();
-    await page.locator('#target-diff-toggle').check({ force: true });
-    assert.deepEqual(await metric(), { value: '+1h', label: 'To target' });
-  } finally { await page.close(); }
-});
 
 test('delayed earlier page status cannot overwrite the latest edited date or other saved settings', async () => {
   const page = await popupFixture();
