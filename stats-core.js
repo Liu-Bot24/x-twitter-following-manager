@@ -384,8 +384,9 @@
     const now = toFiniteNumber(nowMs === undefined ? Date.now() : nowMs);
     if (normalized.convertTzEnabled && !normalized.targetDiffEnabled && now !== null) {
       const isZh = String(locale || "").toLowerCase().startsWith("zh");
-      const clock = formatShortClockInOffset(now, normalized.convertTzOffset, locale, hour12).clock;
-      nowText = `${isZh ? "现在" : "Now"} ${tzLabel} ${clock}`;
+      // Same date-and-time format as the converted segment, so a day change is visible.
+      const formattedNow = formatTimestampInOffset(now, normalized.convertTzOffset, locale, hour12);
+      nowText = `${isZh ? "现在" : "Now"} ${tzLabel} ${formattedNow}`;
     }
     return {
       convertedText,

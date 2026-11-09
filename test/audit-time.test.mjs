@@ -54,9 +54,9 @@ test('third tooltip segment is the target diff when enabled, otherwise a live cl
   try {
     assert.deepEqual(await segments(), ['xfs-time-tooltip-tz:UTC+8 3:21 AM · Oct 25, 2026', 'xfs-time-tooltip-diff:+6h 39m']);
     await page.evaluate(() => { audit.state.settings.targetDiffEnabled = false; audit.refreshTimestampTooltips(); });
-    assert.deepEqual(await segments(), ['xfs-time-tooltip-tz:UTC+8 3:21 AM · Oct 25, 2026', 'xfs-time-tooltip-now:Now UTC+8 8:59 AM']);
+    assert.deepEqual(await segments(), ['xfs-time-tooltip-tz:UTC+8 3:21 AM · Oct 25, 2026', 'xfs-time-tooltip-now:Now UTC+8 8:59 AM · Nov 9, 2026']);
     await page.clock.runFor(21000);
-    assert.deepEqual(await segments(), ['xfs-time-tooltip-tz:UTC+8 3:21 AM · Oct 25, 2026', 'xfs-time-tooltip-now:Now UTC+8 9:00 AM']);
+    assert.deepEqual(await segments(), ['xfs-time-tooltip-tz:UTC+8 3:21 AM · Oct 25, 2026', 'xfs-time-tooltip-now:Now UTC+8 9:00 AM · Nov 9, 2026']);
     await page.evaluate(() => { audit.state.settings.targetDiffEnabled = true; audit.refreshTimestampTooltips(); });
     assert.deepEqual(await segments(), ['xfs-time-tooltip-tz:UTC+8 3:21 AM · Oct 25, 2026', 'xfs-time-tooltip-diff:+6h 39m']);
     assert.equal(await page.evaluate(() => audit.state.tooltipClockTimer), 0);
@@ -68,7 +68,7 @@ test('added tooltip segments follow a 24-hour native X clock', async () => {
   const segments = () => page.locator('#time-tip').evaluate(el => [...el.querySelectorAll('.xfs-time-tooltip-tz, .xfs-time-tooltip-now')].map(node => node.textContent));
   try {
     await page.evaluate(() => { audit.state.settings.targetDiffEnabled = false; audit.refreshTimestampTooltips(); });
-    assert.deepEqual(await segments(), ['UTC+8 03:21 · Oct 25, 2026', 'Now UTC+8 08:59']);
+    assert.deepEqual(await segments(), ['UTC+8 03:21 · Oct 25, 2026', 'Now UTC+8 08:59 · Nov 9, 2026']);
     assert.match(await page.locator('#time-tip').textContent(), /^19:21 · 24 Oct 2026/);
   } finally { await page.close(); }
 });
