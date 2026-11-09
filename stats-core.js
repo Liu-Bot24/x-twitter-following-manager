@@ -226,7 +226,24 @@
     return new Date(ms + offset * 3600 * 1000);
   }
 
-  function formatTimestampInOffset(timestampMs, offsetHours, locale) {
+  const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+  // hour12 defaults to true; pass false for a 24-hour clock such as "15:55".
+  function formatWallClock(wall, isZh, hour12) {
+    const hours24 = wall.getUTCHours();
+    const minutes = String(wall.getUTCMinutes()).padStart(2, "0");
+    if (hour12 === false) {
+      return `${String(hours24).padStart(2, "0")}:${minutes}`;
+    }
+    const isPM = hours24 >= 12;
+    const hours12 = hours24 % 12 || 12;
+    if (isZh) {
+      return `${isPM ? "下午" : "上午"}${hours12}:${minutes}`;
+    }
+    return `${hours12}:${minutes} ${isPM ? "PM" : "AM"}`;
+  }
+
+  function formatTimestampInOffset(timestampMs, offsetHours, locale, hour12) {
     const wall = toOffsetWallDate(timestampMs, offsetHours);
     if (!wall) {
       return "";
@@ -235,20 +252,14 @@
     const year = wall.getUTCFullYear();
     const month = wall.getUTCMonth() + 1;
     const day = wall.getUTCDate();
-    const hours24 = wall.getUTCHours();
-    const minutes = String(wall.getUTCMinutes()).padStart(2, "0");
-    const isPM = hours24 >= 12;
-    const hours12 = hours24 % 12 || 12;
+    const clock = formatWallClock(wall, isZh, hour12);
     if (isZh) {
-      const ampm = isPM ? "下午" : "上午";
-      return `${ampm}${hours12}:${minutes} · ${year}年${month}月${day}日`;
+      return `${clock} · ${year}年${month}月${day}日`;
     }
-    const ampm = isPM ? "PM" : "AM";
-    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    return `${hours12}:${minutes} ${ampm} · ${monthNames[month - 1]} ${day}, ${year}`;
+    return `${clock} · ${MONTH_NAMES[month - 1]} ${day}, ${year}`;
   }
 
-  function formatShortClockInOffset(timestampMs, offsetHours, locale) {
+  function formatShortClockInOffset(timestampMs, offsetHours, locale, hour12) {
     const wall = toOffsetWallDate(timestampMs, offsetHours);
     if (!wall) {
       return { clock: "--:--", date: "" };
@@ -256,21 +267,21 @@
     const isZh = String(locale || "").toLowerCase().startsWith("zh");
     const month = wall.getUTCMonth() + 1;
     const day = wall.getUTCDate();
-    const hours24 = wall.getUTCHours();
-    const minutes = String(wall.getUTCMinutes()).padStart(2, "0");
-    const isPM = hours24 >= 12;
-    const hours12 = hours24 % 12 || 12;
-    if (isZh) {
-      return {
-        clock: `${isPM ? "下午" : "上午"}${hours12}:${minutes}`,
-        date: `${month}月${day}日`
-      };
-    }
-    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     return {
-      clock: `${hours12}:${minutes} ${isPM ? "PM" : "AM"}`,
-      date: `${monthNames[month - 1]} ${day}`
+      clock: formatWallClock(wall, isZh, hour12),
+      date: isZh ? `${month}月${day}日` : `${MONTH_NAMES[month - 1]} ${day}`
     };
+  }
+
+  // Reads whether X rendered its own timestamp tooltip with a 12-hour clock.
+  function usesTwelveHourClock(text) {
+    const value = String(text || "");
+    if (/\d{1,2}:\d{2}\s*[ap]\.?\s?m\b/i.test(value) || /上午|下午|中午|凌晨|早上|晚上|午前|午後|오전|오후/.test(value)) {
+      return true;
+    }
+    // A clock without any day-period marker is a 24-hour clock; no clock at
+    // all keeps the 12-hour default.
+    return !/\d{1,2}:\d{2}/.test(value);
   }
 
   function computeTargetMomentDiff(timestampMs, targetTzOffset, targetDateTimeStr, locale) {
@@ -337,16 +348,18 @@
     };
   }
 
-  function buildTimestampHoverParts(timestampMs, settings, locale, nowMs) {
+  // options.hour12: false renders converted and current times as 24-hour clocks.
+  function buildTimestampHoverParts(timestampMs, settings, locale, nowMs, options) {
     const normalized = normalizeDisplaySettings(settings);
     const ms = toFiniteNumber(timestampMs);
+    const hour12 = !(options && options.hour12 === false);
     if (ms === null) {
       return { convertedText: "", diffText: "", diffMinutes: 0, nowText: "" };
     }
+    const tzLabel = formatUtcOffsetLabel(normalized.convertTzOffset);
     let convertedText = "";
     if (normalized.convertTzEnabled) {
-      const tzLabel = formatUtcOffsetLabel(normalized.convertTzOffset);
-      const formatted = formatTimestampInOffset(ms, normalized.convertTzOffset, locale);
+      const formatted = formatTimestampInOffset(ms, normalized.convertTzOffset, locale, hour12);
       if (formatted) {
         convertedText = `${tzLabel} ${formatted}`;
       }
@@ -371,8 +384,8 @@
     const now = toFiniteNumber(nowMs === undefined ? Date.now() : nowMs);
     if (normalized.convertTzEnabled && !normalized.targetDiffEnabled && now !== null) {
       const isZh = String(locale || "").toLowerCase().startsWith("zh");
-      const clock = formatShortClockInOffset(now, normalized.convertTzOffset, locale).clock;
-      nowText = `${isZh ? "现在" : "Now"} ${clock}`;
+      const clock = formatShortClockInOffset(now, normalized.convertTzOffset, locale, hour12).clock;
+      nowText = `${isZh ? "现在" : "Now"} ${tzLabel} ${clock}`;
     }
     return {
       convertedText,
@@ -1583,6 +1596,7 @@
     formatTimestampInOffset,
     formatUtcOffsetLabel,
     formatUtcOffsetOptionLabel,
+    usesTwelveHourClock,
     isStatsAllowedPath,
     isCachedStatsFresh,
     mergeCachedUserRecords,

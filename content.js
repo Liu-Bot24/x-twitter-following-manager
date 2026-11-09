@@ -407,7 +407,8 @@
       return;
     }
     const locale = i18n && i18n.localeTag ? i18n.localeTag(state.languagePreference) : "en";
-    const parts = core.buildTimestampHoverParts(state.hoveredTimestampMs, state.settings, locale);
+    const nowMs = Date.now();
+    const parts = core.buildTimestampHoverParts(state.hoveredTimestampMs, state.settings, locale, nowMs);
     if (!parts.convertedText && !parts.diffText && !parts.nowText) {
       clearTimestampTooltips();
       return;
@@ -436,7 +437,9 @@
       } else if (extra.parentElement !== container) {
         container.appendChild(extra);
       }
-      renderTooltipExtraNodes(extra, parts);
+      // Follow X's own clock style (12h vs 24h) so all segments read alike.
+      const hour12 = core.usesTwelveHourClock ? core.usesTwelveHourClock(baseText) : true;
+      renderTooltipExtraNodes(extra, hour12 ? parts : core.buildTimestampHoverParts(state.hoveredTimestampMs, state.settings, locale, nowMs, { hour12 }));
       rendered = true;
     });
     syncTooltipClock(rendered && Boolean(parts.nowText));

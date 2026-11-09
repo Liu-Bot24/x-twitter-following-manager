@@ -860,12 +860,24 @@ const fixedNowMs = Date.UTC(2026, 10, 9, 5, 9);
 assert.equal(core.buildTimestampHoverParts(sampleTweetMs, customTzSettings, "zh-CN", fixedNowMs).nowText, "");
 assert.equal(
   core.buildTimestampHoverParts(sampleTweetMs, { ...customTzSettings, targetDiffEnabled: false }, "zh-CN", fixedNowMs).nowText,
-  "现在 下午10:09"
+  "现在 UTC-7 下午10:09"
 );
 assert.equal(
   core.buildTimestampHoverParts(sampleTweetMs, { ...customTzSettings, targetDiffEnabled: false, convertTzOffset: -8 }, "en", fixedNowMs).nowText,
-  "Now 9:09 PM"
+  "Now UTC-8 9:09 PM"
 );
+const hover24 = core.buildTimestampHoverParts(sampleTweetMs, { ...customTzSettings, targetDiffEnabled: false }, "zh-CN", fixedNowMs, { hour12: false });
+assert.equal(hover24.convertedText, "UTC-7 12:21 · 2026年10月24日");
+assert.equal(hover24.nowText, "现在 UTC-7 22:09");
+assert.equal(core.formatShortClockInOffset(Date.UTC(2026, 10, 9, 1, 5), 0, "en", false).clock, "01:05");
+
+// Native X clock style: day-period markers mean 12h, a bare clock means 24h.
+for (const text of ["下午1:09 · 2026年11月8日", "1:09 PM · Nov 8, 2026", "1:09 p.m. · 8 nov. 2026", "午後1:09 · 2026年11月8日", "오후 1:09 · 2026년 11월 8일", "no clock here"]) {
+  assert.equal(core.usesTwelveHourClock(text), true, text);
+}
+for (const text of ["13:09 · 8. Nov. 2026", "09:05 · 8 Nov 2026", "1:09 · 8 nov 2026", "13:09 · am 8. Nov. 2026"]) {
+  assert.equal(core.usesTwelveHourClock(text), false, text);
+}
 assert.equal(
   core.buildTimestampHoverParts(sampleTweetMs, { ...customTzSettings, targetDiffEnabled: false, convertTzEnabled: false }, "zh-CN", fixedNowMs).nowText,
   ""
